@@ -1,0 +1,17 @@
+build/
+install/
+log/
+
+# Upstream dependency clones - install via rosdep/git clone
+src/diffdrive_arduino/
+src/serial/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Editor
+.vscode/
+*.swp
+.claude/
