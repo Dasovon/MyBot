@@ -90,14 +90,14 @@ From `src/articubot_one/description/ros2_control.xacro`:
 - serial device: `/dev/ttyUSB0`
 - baud rate: `57600`
 - timeout: `1000 ms`
-- encoder counts per rev: `1100` (updated 2026-03-16: motors swapped to DC12V 130RPM Amazon encoder gear motors; measured ~1100 counts/rev via serial encoder readback; was 748 for old E-S Motor 34:1 units; pending odometry validation)
+- encoder counts per rev: `990` (validated 2026-03-16: DC12V 130RPM Amazon JGA25-371 motors; measured via odometry over 1m; actual gear ratio is 45:1 not 34:1 — Amazon listing RPM is inaccurate; formula: new = old × reported/actual)
 
 From `src/articubot_one/config/my_controllers.yaml`:
 - controller manager update rate: `30`
 - diff drive controller name: `diff_cont`
 - joint state broadcaster name: `joint_broad`
-- wheel separation: `0.297`
-- wheel radius: `0.0325` (65mm diameter confirmed from E-S Motor datasheet)
+- wheel separation: `0.179` (179mm center-to-center, measured 2026-03-16)
+- wheel radius: `0.034` (68mm diameter, new JGA25-371 motors — wider than CAD drawing)
 - `use_stamped_vel: false`
 - command remap target: `/diff_cont/cmd_vel_unstamped`
 - linear acceleration limit: `0.5 m/s²`
@@ -137,13 +137,14 @@ From `src/articubot_one/config/my_controllers.yaml`:
 - Never treat tutorial comments as truth. Verify against current files.
 
 ## Current Status (2026-03-16)
-- Motors swapped to DC12V 130RPM Amazon encoder gear motors
-- `enc_counts_per_rev` updated to `1100` (measured, pending odometry validation)
-- Both encoders confirmed working via serial readback
-- Left encoder counts negative for forward rotation — direction inversion may need re-check after full launch
-- **Pending:** drive 1m forward, verify `/odom` x ≈ 1.0m, fine-tune `enc_counts_per_rev` if needed
+- Motors swapped to DC12V 130RPM Amazon JGA25-371 encoder gear motors (actual ratio 45:1)
+- `enc_counts_per_rev = 990` via odometry (two runs, consistent) — **needs re-validation** after wheel_radius corrected to 0.034 (68mm measured vs 65mm datasheet)
+- Both encoders confirmed positive for forward rotation — no inversion needed
+- URDF updated to actual robot dimensions (robot_core.xacro, lidar.xacro, my_controllers.yaml)
+- wheel_separation corrected from 0.297 → 0.179m (old value was wider than entire robot)
+- wheel_radius corrected from 0.0325 → 0.034m (measured 68mm, datasheet says 65mm)
 - Dev machine (192.168.86.52) communicates with Pi (192.168.86.33) via ROS 2 DDS on `ROS_DOMAIN_ID=0`
-- Next steps: validate odometry → mount RPLidar → SLAM → Nav2
+- Next steps: re-validate enc_counts_per_rev with corrected wheel_radius → install RPLidar A1 M8 → SLAM → Nav2
 
 ### Previous validated state (2026-03-13)
 - All 7 differential drive validation checkpoints passed with old E-S Motor 34:1 units
@@ -188,15 +189,32 @@ Files changed:
   - Fixed: `if (A != B) pos++` → both wheels now count positive for forward rotation
   - Reflashed Arduino after fix
 
+### 11) URDF updated to actual robot dimensions (2026-03-16)
+All dimensions measured from physical robot and CAD renders in `Hardware/mybot/`.
+Files changed:
+- `src/articubot_one/description/robot_core.xacro` — chassis, wheel, and caster dimensions updated to actual measurements
+- `src/articubot_one/description/lidar.xacro` — laser_frame xyz updated to actual lidar position
+- `src/articubot_one/config/my_controllers.yaml` — wheel_separation and wheel_radius corrected
+
+Key corrections:
+- `wheel_separation`: 0.297 → 0.179 (old value was physically impossible — wider than robot)
+- `wheel_radius`: 0.0325 → 0.034 (measured 68mm diameter; datasheet says 65mm)
+- `chassis_length`: 0.335 → 0.240
+- `chassis_width`: 0.265 → 0.1355
+- `wheel_offset_y`: 0.1485 → 0.0895
+- `caster_wheel_offset_x`: 0.075 → 0.033
+- lidar xyz: `0.122, 0, 0.212` → `0.200, 0, 0.116`
+
+Note: `enc_counts_per_rev = 990` needs re-validation after wheel_radius change (4.6% scale error expected).
+
 ### 10) Motor swap and encoder recalibration (2026-03-16)
 Motors replaced with: DC12V 130RPM encoder gear motors (Amazon B07X7M1LLQ)
-- 11 PPR encoder on motor shaft, ~50:1 gear ratio (inferred from ~1100 counts/rev measurement)
+- JGA25-371, actual gear ratio 45:1 (Amazon listing says 34:1 — inaccurate)
+- 11 PPR encoder on motor shaft
 - Encoder voltage: 3.3–5V
 - Wire colors updated (see Hardware / Wiring Notes)
 Files changed:
-- `src/articubot_one/description/ros2_control.xacro` — `enc_counts_per_rev` updated from 748 to 1100
-- Value measured via serial encoder readback (`e` command); pending odometry validation
-- If odometry is off, adjust: `new_value = 1100 × (actual_distance / reported_distance)`
+- `src/articubot_one/description/ros2_control.xacro` — `enc_counts_per_rev` updated to 990 (validated via odometry 2026-03-16; correction formula: new = old × reported/actual)
 
 ### 8) Kinematics and controller config fixes (2026-03-13)
 Files changed:
@@ -299,6 +317,48 @@ From `launch_robot.launch.py`:
   - `joint_broad`
 - controller manager startup is delayed by `3.0` seconds
 
+## Robot Physical Dimensions
+Source: `Hardware/mybot/` — CAD renders (mybot_dim.png and orthographic views)
+
+### Orientation
+- **Front** = drive wheel side (curved bumper)
+- **Back** = caster side (flat end)
+- Note: opposite of tutorial robot orientation — verify when editing URDF
+
+### Chassis (all mm)
+- Chassis length (front→back): `240`
+- Chassis plate width: `135.5`
+- Total width incl. motors: `200` (left overhang 26.2mm, right 38.3mm — slightly asymmetric)
+- Lidar standoff base: `25mm`
+- Back wall/caster assembly height: `95mm`
+- Total height (ground→lidar top): `153.25`
+- Lower plate height from ground: `47.25` (±0.1)
+- Inter-deck gap: `40`
+- Standoff outer span (side view): `96.5`
+- Standoff inner span (side view): `70`
+- Plate thickness: `5`
+
+### Wheels & Caster
+- Wheel diameter: `Ø65mm` → radius `32.5mm` ✓
+- Wheel separation: `297mm` center-to-center ✓
+- Wheel axle from front edge: `83.5mm` → 36.5mm ahead of chassis center
+- Caster: `R10` ball (20mm diameter)
+- Caster from back edge: `33mm` → 87mm behind chassis center
+
+### Derived URDF values
+- Wheel axle height from ground: `32.5mm`
+- Lower plate above axle: `47.25 − 32.5 = 14.75mm`
+- Caster x from chassis center: `−87mm`
+- Lidar: centered laterally (y=0), x and z position TBD from physical measurement
+
+### Derived URDF values (applied 2026-03-16)
+- `wheel_offset_x`: `0.1565` (chassis rear to wheel axle = 240 − 83.5mm)
+- `wheel_offset_y`: `0.0895` (half of 179mm c-t-c)
+- `wheel_offset_z`: `-0.010` (plate is 10mm ABOVE axle — negative)
+- `caster_wheel_offset_x`: `0.033` (33mm from rear in chassis frame)
+- Lidar xyz in chassis frame: `0.200, 0, 0.116` (40mm from front, 160mm scan plane from ground)
+- Ground to top of top plate: `96mm`
+
 ## Hardware / Wiring Notes
 ### Serial / firmware behavior from `ros_arduino_bridge/README.md`
 - default baud rate: `57600`
@@ -360,7 +420,7 @@ Build a Mobile Robot with ROS
 ├── Hardware
 │   ├── The Brain - Raspberry Pi                                 ✅ done
 │   ├── Power Concepts                                           ✅ done
-│   ├── Adding Lidar                                             ⬅ NEXT
+│   ├── Adding Lidar                                             ⬅ NEXT (odometry validated 2026-03-16)
 │   └── Adding a Camera                                          ⬜ pending
 └── Applications
     ├── ros2_control Concepts & Simulation                       ✅ done
