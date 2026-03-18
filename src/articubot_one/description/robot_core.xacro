@@ -16,7 +16,7 @@
     <xacro:property name="wheel_offset_z" value="-0.010"/>
     <xacro:property name="caster_wheel_radius" value="0.01"/>
     <xacro:property name="caster_wheel_mass" value="0.01"/>
-    <xacro:property name="caster_wheel_offset_x" value="0.033"/>
+    <xacro:property name="caster_wheel_offset_x" value="0.207"/>
     <xacro:property name="caster_wheel_offset_z" value="${wheel_offset_z - wheel_radius + caster_wheel_radius}"/>
 
     <material name="white">
@@ -62,7 +62,7 @@
     <joint name="chassis_joint" type="fixed">
         <parent link="base_link"/>
         <child link="chassis"/>
-        <origin xyz="${-wheel_offset_x} 0 ${-wheel_offset_z}"/>
+        <origin xyz="${chassis_length - wheel_offset_x} 0 ${-wheel_offset_z}" rpy="0 0 ${pi}"/>
     </joint>
 
     <link name="chassis">

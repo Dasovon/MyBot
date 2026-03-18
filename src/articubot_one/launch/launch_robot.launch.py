@@ -105,6 +105,12 @@ def generate_launch_description():
 
 
 
+    lidar = IncludeLaunchDescription(
+                PythonLaunchDescriptionSource([os.path.join(
+                    get_package_share_directory(package_name),'launch','rplidar.launch.py'
+                )])
+    )
+
     # Launch them all!
     return LaunchDescription([
         rsp,
@@ -112,5 +118,6 @@ def generate_launch_description():
         twist_mux,
         delayed_controller_manager,
         delayed_diff_drive_spawner,
-        delayed_joint_broad_spawner
+        delayed_joint_broad_spawner,
+        lidar
     ])
