@@ -87,7 +87,7 @@ From `src/articubot_one/description/ros2_control.xacro`:
 - left wheel joint: `left_wheel_joint`
 - right wheel joint: `right_wheel_joint`
 - loop rate: `30`
-- serial device: `/dev/ttyUSB0`
+- serial device: `/dev/arduino` (udev symlink → ttyUSB0)
 - baud rate: `57600`
 - timeout: `1000 ms`
 - encoder counts per rev: `1010` (re-validated 2026-03-17 with corrected wheel_radius=0.034; 3 wall-guided runs avg 1011; actual gear ratio is 45:1 not 34:1 — Amazon listing RPM is inaccurate; formula: new = old × reported/actual)
@@ -191,6 +191,23 @@ Files changed:
   - Was: `if (A == B) pos++` → right wheel counted negative for forward rotation
   - Fixed: `if (A != B) pos++` → both wheels now count positive for forward rotation
   - Reflashed Arduino after fix
+
+### 12) RPLidar A1 M8 installed and robot model orientation fixed (2026-03-17)
+Files changed:
+- `/etc/udev/rules.d/99-mybot.rules` — udev symlinks: `/dev/arduino` (CH340, 1a86:7523) and `/dev/rplidar` (CP2102, 10c4:ea60)
+- `src/articubot_one/description/ros2_control.xacro` — device changed from `/dev/ttyUSB0` to `/dev/arduino`
+- `src/articubot_one/launch/rplidar.launch.py` — serial_port `/dev/rplidar`, serial_baudrate 115200 added
+- `src/articubot_one/launch/launch_robot.launch.py` — rplidar.launch.py included in main launch
+- `src/articubot_one/description/robot.urdf.xacro` — face.xacro disabled
+- `src/articubot_one/description/robot_core.xacro` — chassis_joint rpy="0 0 pi" added; chassis_joint x changed to `chassis_length - wheel_offset_x`; caster_wheel_offset_x 0.033 → 0.207
+- `src/articubot_one/description/lidar.xacro` — origin x 0.200 → 0.040 (40mm from front in flipped chassis frame)
+- `~/.bashrc` — `mybot-launch` alias added (clears serial ports before launching)
+- `/etc/sudoers.d/ryan-nopasswd` — passwordless sudo for ryan
+
+Key issues resolved:
+- rplidar failed with timeout until `serial_baudrate: 115200` was added explicitly
+- Stale serial port processes cause crash on restart — use `sudo fuser -k /dev/arduino /dev/rplidar` before launching (or `mybot-launch` alias)
+- Robot model was rendered 180° backwards — chassis was oriented with caster side as positive x. Fixed by adding rpy="0 0 pi" to chassis_joint and recalculating caster and lidar offsets
 
 ### 11) URDF updated to actual robot dimensions (2026-03-16)
 All dimensions measured from physical robot and CAD renders in `Hardware/mybot/`.
