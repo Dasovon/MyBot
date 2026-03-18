@@ -143,8 +143,11 @@ From `src/articubot_one/config/my_controllers.yaml`:
 - URDF updated to actual robot dimensions (robot_core.xacro, lidar.xacro, my_controllers.yaml)
 - wheel_separation corrected from 0.297 → 0.179m (old value was wider than entire robot)
 - wheel_radius corrected from 0.0325 → 0.034m (measured 68mm, datasheet says 65mm)
+- RPLidar A1 M8 installed and scanning — ros-humble-rplidar-ros installed, /dev/rplidar udev symlink active
+- Robot model orientation fixed — chassis was rendered backwards; fixed with 180° chassis_joint rotation
+- face.xacro disabled — tutorial-era visual removed
 - Dev machine (192.168.86.52) communicates with Pi (192.168.86.33) via ROS 2 DDS on `ROS_DOMAIN_ID=0`
-- Next steps: install RPLidar A1 M8 → SLAM → Nav2
+- Next steps: SLAM with slam_toolbox → Nav2
 
 ### Previous validated state (2026-03-13)
 - All 7 differential drive validation checkpoints passed with old E-S Motor 34:1 units
@@ -420,14 +423,14 @@ Build a Mobile Robot with ROS
 ├── Hardware
 │   ├── The Brain - Raspberry Pi                                 ✅ done
 │   ├── Power Concepts                                           ✅ done
-│   ├── Adding Lidar                                             ⬅ NEXT (odometry validated 2026-03-16)
+│   ├── Adding Lidar                                             ✅ done (2026-03-17)
 │   └── Adding a Camera                                          ⬜ pending
 └── Applications
     ├── ros2_control Concepts & Simulation                       ✅ done
     ├── ros2_control extra bits                                   ✅ done
     ├── ros2_control on the real robot                           ✅ done (+ full validation 2026-03-13)
     ├── Teleoperation                                            ✅ done
-    ├── SLAM with slam_toolbox                                   ⬜ pending
+    ├── SLAM with slam_toolbox                                   ⬅ NEXT
     ├── Navigation with Nav2                                     ⬜ pending
     └── Object Tracking with OpenCV                             ⬜ pending
 ```
