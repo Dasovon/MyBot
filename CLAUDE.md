@@ -90,7 +90,7 @@ From `src/articubot_one/description/ros2_control.xacro`:
 - serial device: `/dev/ttyUSB0`
 - baud rate: `57600`
 - timeout: `1000 ms`
-- encoder counts per rev: `990` (validated 2026-03-16: DC12V 130RPM Amazon JGA25-371 motors; measured via odometry over 1m; actual gear ratio is 45:1 not 34:1 — Amazon listing RPM is inaccurate; formula: new = old × reported/actual)
+- encoder counts per rev: `1010` (re-validated 2026-03-17 with corrected wheel_radius=0.034; 3 wall-guided runs avg 1011; actual gear ratio is 45:1 not 34:1 — Amazon listing RPM is inaccurate; formula: new = old × reported/actual)
 
 From `src/articubot_one/config/my_controllers.yaml`:
 - controller manager update rate: `30`
@@ -136,15 +136,15 @@ From `src/articubot_one/config/my_controllers.yaml`:
 - Never change serial device, baud, motor polarity, and encoder mapping all at once during debugging.
 - Never treat tutorial comments as truth. Verify against current files.
 
-## Current Status (2026-03-16)
+## Current Status (2026-03-17)
 - Motors swapped to DC12V 130RPM Amazon JGA25-371 encoder gear motors (actual ratio 45:1)
-- `enc_counts_per_rev = 990` via odometry (two runs, consistent) — **needs re-validation** after wheel_radius corrected to 0.034 (68mm measured vs 65mm datasheet)
+- `enc_counts_per_rev = 1010` — re-validated 2026-03-17 with corrected wheel_radius=0.034 (3 wall-guided runs avg: 1006/1016/1012)
 - Both encoders confirmed positive for forward rotation — no inversion needed
 - URDF updated to actual robot dimensions (robot_core.xacro, lidar.xacro, my_controllers.yaml)
 - wheel_separation corrected from 0.297 → 0.179m (old value was wider than entire robot)
 - wheel_radius corrected from 0.0325 → 0.034m (measured 68mm, datasheet says 65mm)
 - Dev machine (192.168.86.52) communicates with Pi (192.168.86.33) via ROS 2 DDS on `ROS_DOMAIN_ID=0`
-- Next steps: re-validate enc_counts_per_rev with corrected wheel_radius → install RPLidar A1 M8 → SLAM → Nav2
+- Next steps: install RPLidar A1 M8 → SLAM → Nav2
 
 ### Previous validated state (2026-03-13)
 - All 7 differential drive validation checkpoints passed with old E-S Motor 34:1 units
@@ -205,7 +205,7 @@ Key corrections:
 - `caster_wheel_offset_x`: 0.075 → 0.033
 - lidar xyz: `0.122, 0, 0.212` → `0.200, 0, 0.116`
 
-Note: `enc_counts_per_rev = 990` needs re-validation after wheel_radius change (4.6% scale error expected).
+Note: `enc_counts_per_rev` re-validated 2026-03-17 → updated to 1010 (3 wall-guided runs, avg 1011).
 
 ### 10) Motor swap and encoder recalibration (2026-03-16)
 Motors replaced with: DC12V 130RPM encoder gear motors (Amazon B07X7M1LLQ)
@@ -214,7 +214,7 @@ Motors replaced with: DC12V 130RPM encoder gear motors (Amazon B07X7M1LLQ)
 - Encoder voltage: 3.3–5V
 - Wire colors updated (see Hardware / Wiring Notes)
 Files changed:
-- `src/articubot_one/description/ros2_control.xacro` — `enc_counts_per_rev` updated to 990 (validated via odometry 2026-03-16; correction formula: new = old × reported/actual)
+- `src/articubot_one/description/ros2_control.xacro` — `enc_counts_per_rev` updated to 990 (validated via odometry 2026-03-16; correction formula: new = old × reported/actual), then re-validated 2026-03-17 → 1010 (3 wall-guided runs with corrected wheel_radius=0.034)
 
 ### 8) Kinematics and controller config fixes (2026-03-13)
 Files changed:
