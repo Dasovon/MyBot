@@ -1,0 +1,42 @@
+ekf_filter_node:
+  ros__parameters:
+
+    frequency: 20.0
+    sensor_timeout: 0.1
+    two_d_mode: true
+    transform_time_offset: 0.0
+    transform_timeout: 0.0
+    print_diagnostics: true
+    debug: false
+
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: base_link
+    world_frame: odom
+
+    # Wheel odometry from diff_drive_controller
+    # Provides: x, y, yaw, vx, vyaw
+    odom0: /diff_cont/odom
+    odom0_config: [true,  true,  false,   # x, y, z
+                   false, false, true,    # roll, pitch, yaw
+                   true,  false, false,   # vx, vy, vz
+                   false, false, true,    # vroll, vpitch, vyaw
+                   false, false, false]   # ax, ay, az
+    odom0_differential: false
+    odom0_relative: false
+    odom0_queue_size: 10
+
+    # BNO055 IMU
+    # Provides: yaw (orientation), vyaw (angular velocity)
+    # We use angular velocity only — BNO055 heading is absolute (magnetometer fused)
+    # which can conflict with odometry heading on a metal robot body
+    imu0: /imu/imu
+    imu0_config: [false, false, false,   # x, y, z
+                  false, false, false,   # roll, pitch, yaw (disable absolute heading)
+                  false, false, false,   # vx, vy, vz
+                  false, false, true,    # vroll, vpitch, vyaw (use gyro angular velocity)
+                  true,  false, false]   # ax, ay, az (use linear acceleration)
+    imu0_differential: false
+    imu0_relative: true
+    imu0_queue_size: 10
+    imu0_remove_gravitational_acceleration: true

@@ -152,6 +152,17 @@
     </gazebo>
 
 
+    <!-- IMU LINK -->
+
+    <joint name="imu_joint" type="fixed">
+        <parent link="base_link"/>
+        <child link="imu_link"/>
+        <origin xyz="0.004 -0.018 0.055" rpy="0 0 0"/>
+    </joint>
+
+    <link name="imu_link">
+    </link>
+
     <!-- CASTER WHEEL LINK -->
 
     <joint name="caster_wheel_joint" type="fixed">

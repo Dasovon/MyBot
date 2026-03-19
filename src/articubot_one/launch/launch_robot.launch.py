@@ -55,7 +55,6 @@ def generate_launch_description():
         executable="ros2_control_node",
         parameters=[{'robot_description': robot_description},
                     controller_params_file],
-        remappings=[('/diff_cont/odom', '/odom')],
     )
 
     delayed_controller_manager = TimerAction(period=3.0, actions=[controller_manager])
@@ -111,6 +110,21 @@ def generate_launch_description():
                 )])
     )
 
+    imu = Node(
+        package='bno055',
+        executable='bno055',
+        parameters=[os.path.join(get_package_share_directory(package_name), 'config', 'bno055_params.yaml')],
+    )
+
+    ekf = Node(
+        package='robot_localization',
+        executable='ekf_node',
+        name='ekf_filter_node',
+        output='screen',
+        parameters=[os.path.join(get_package_share_directory(package_name), 'config', 'ekf.yaml')],
+        remappings=[('/odometry/filtered', '/odom')],
+    )
+
     # Launch them all!
     return LaunchDescription([
         rsp,
@@ -119,5 +133,7 @@ def generate_launch_description():
         delayed_controller_manager,
         delayed_diff_drive_spawner,
         delayed_joint_broad_spawner,
-        lidar
+        lidar,
+        imu,
+        ekf,
     ])

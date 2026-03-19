@@ -3,6 +3,9 @@
 ## Project Goal
 ROS 2 Humble differential drive robot stack for a Raspberry Pi + Arduino robot using `ros2_control`, `diffdrive_arduino`, and serial motor/encoder communication.
 
+## Environment Note
+Claude runs directly on the Raspberry Pi (`mybot`). All Bash commands execute on the Pi. No need to ask the user to run commands manually unless they involve the dev machine.
+
 ## Tech Stack
 - Ubuntu 22.04 LTS
 - ROS 2 Humble
@@ -136,7 +139,7 @@ From `src/articubot_one/config/my_controllers.yaml`:
 - Never change serial device, baud, motor polarity, and encoder mapping all at once during debugging.
 - Never treat tutorial comments as truth. Verify against current files.
 
-## Current Status (2026-03-17)
+## Current Status (2026-03-18)
 - Motors swapped to DC12V 130RPM Amazon JGA25-371 encoder gear motors (actual ratio 45:1)
 - `enc_counts_per_rev = 1010` — re-validated 2026-03-17 with corrected wheel_radius=0.034 (3 wall-guided runs avg: 1006/1016/1012)
 - Both encoders confirmed positive for forward rotation — no inversion needed
@@ -147,7 +150,11 @@ From `src/articubot_one/config/my_controllers.yaml`:
 - Robot model orientation fixed — chassis was rendered backwards; fixed with 180° chassis_joint rotation
 - face.xacro disabled — tutorial-era visual removed
 - Dev machine (192.168.86.52) communicates with Pi (192.168.86.33) via ROS 2 DDS on `ROS_DOMAIN_ID=0`
-- Next steps: SLAM with slam_toolbox → Nav2
+- SLAM with slam_toolbox complete (2026-03-18) — map saved to `~/mybot_ws/maps/my_map` (.pgm + .yaml), 200x136 @ 0.05m/pix
+- BNO055 IMU fully integrated (2026-03-18) — ros-humble-bno055 installed, I2C bus 1, address 0x28, publishing /imu/imu
+- robot_localization EKF running — fuses /diff_cont/odom + /imu/imu → /odom at 20Hz
+- imu_link added to URDF at xyz="0.004 -0.018 0.055" (80mm from front, 50mm from right edge, upper deck)
+- Next steps: Nav2
 
 ### Previous validated state (2026-03-13)
 - All 7 differential drive validation checkpoints passed with old E-S Motor 34:1 units
@@ -191,6 +198,40 @@ Files changed:
   - Was: `if (A == B) pos++` → right wheel counted negative for forward rotation
   - Fixed: `if (A != B) pos++` → both wheels now count positive for forward rotation
   - Reflashed Arduino after fix
+
+### 14) BNO055 IMU + robot_localization EKF integrated (2026-03-18)
+Packages installed:
+- `ros-humble-bno055` — I2C IMU driver
+- `ros-humble-robot-localization` — EKF sensor fusion
+
+Files changed:
+- `src/articubot_one/description/robot_core.xacro` — added `imu_link` at xyz="0.004 -0.018 0.055" (80mm from front edge, 50mm from right edge, upper deck)
+- `src/articubot_one/config/bno055_params.yaml` — new: I2C bus 1, addr 0x28, topic prefix `imu/`, frame_id `imu_link`, NDOF mode
+- `src/articubot_one/config/ekf.yaml` — new: fuses /diff_cont/odom + /imu/imu → /odom at 20Hz, two_d_mode true
+- `src/articubot_one/launch/launch_robot.launch.py` — added bno055 and ekf_node; removed old `/diff_cont/odom → /odom` remap (EKF now owns /odom); added `/odometry/filtered → /odom` remap on EKF node
+
+Key notes:
+- BNO055 uses I2C not UART — must set `connection_type: i2c` and `i2c_bus: 1` in config
+- EKF IMU config: orientation disabled (magnetometer unreliable on metal robot), angular velocity + linear accel enabled
+- EKF frequency lowered to 20Hz to avoid overload warnings on Pi
+- i2c-tools installed for diagnostics: `sudo i2cdetect -y 1` confirms BNO055 at 0x28
+
+### 13) SLAM with slam_toolbox configured and confirmed working (2026-03-18)
+Files changed:
+- `src/articubot_one/launch/online_async_launch.py` — `use_sim_time` default changed `true` → `false` (real robot)
+- `src/articubot_one/config/mapper_params_online_async.yaml` — `mode: localization` → `mode: mapping`; placeholder `map_file_name` commented out; `max_laser_range: 20.0` → `12.0` (RPLidar A1 M8 spec); `minimum_travel_distance` and `minimum_travel_heading` lowered from `0.5` → `0.2` (reduces drift in small rooms)
+
+Launch sequence:
+1. Pi Terminal 1: `mybot-launch`
+2. Pi Terminal 2: `source ~/mybot_ws/install/setup.bash && ros2 launch articubot_one online_async_launch.py`
+3. Dev machine: `rviz2` — add Map `/map`, LaserScan `/scan`, set Fixed Frame to `map`
+4. Drive with teleop to build map
+5. Save map: `ros2 run nav2_map_server map_saver_cli -f ~/mybot_ws/maps/my_map`
+
+Key notes:
+- Must `source ~/mybot_ws/install/setup.bash` on Pi before launching — Pi also has `robot_ws` which does not have articubot_one
+- slam_toolbox is passive — robot must be driven manually with teleop
+- BNO055 IMU on hand; plan to integrate with `robot_localization` EKF after map is complete
 
 ### 12) RPLidar A1 M8 installed and robot model orientation fixed (2026-03-17)
 Files changed:
@@ -308,7 +349,21 @@ colcon build --symlink-install
 
 ### Launch robot
 ```bash
-ros2 launch articubot_one launch_robot.launch.py
+mybot-launch
+```
+Alias clears /dev/arduino and /dev/rplidar before launching. Starts: robot_state_publisher, ros2_control_node, diff_drive_controller, joint_state_broadcaster, twist_mux, rplidar, bno055, ekf_filter_node.
+
+### Check IMU
+```bash
+sudo i2cdetect -y 1        # confirm BNO055 at 0x28
+ros2 topic echo /imu/imu   # verify IMU data flowing
+ros2 topic echo /imu/calib_status  # check calibration (0-3, 3=fully calibrated)
+```
+
+### Check odometry
+```bash
+ros2 topic echo /odom              # EKF filtered odometry
+ros2 topic echo /diff_cont/odom    # raw wheel odometry
 ```
 
 ### Package checks
@@ -447,8 +502,8 @@ Build a Mobile Robot with ROS
     ├── ros2_control extra bits                                   ✅ done
     ├── ros2_control on the real robot                           ✅ done (+ full validation 2026-03-13)
     ├── Teleoperation                                            ✅ done
-    ├── SLAM with slam_toolbox                                   ⬅ NEXT
-    ├── Navigation with Nav2                                     ⬜ pending
+    ├── SLAM with slam_toolbox                                   ✅ done (2026-03-18) — map saved
+    ├── Navigation with Nav2                                     ⬅ NEXT
     └── Object Tracking with OpenCV                             ⬜ pending
 ```
 
