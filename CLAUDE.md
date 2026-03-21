@@ -139,7 +139,17 @@ From `src/articubot_one/config/my_controllers.yaml`:
 - Never change serial device, baud, motor polarity, and encoder mapping all at once during debugging.
 - Never treat tutorial comments as truth. Verify against current files.
 
-## Current Status (2026-03-18)
+## End-of-Session Rule
+At the end of every session, Claude must update:
+1. `CLAUDE.md` — current status, fix history, tutorial progress, next steps
+2. All memory files in `/home/ryan/.claude/projects/-home-ryan-mybot-ws/memory/`
+3. Any hardware docs in `docs/` if hardware was changed
+
+This applies even if the session ended without completing the task.
+
+---
+
+## Current Status (2026-03-21)
 - Motors swapped to DC12V 130RPM Amazon JGA25-371 encoder gear motors (actual ratio 45:1)
 - `enc_counts_per_rev = 1010` — re-validated 2026-03-17 with corrected wheel_radius=0.034 (3 wall-guided runs avg: 1006/1016/1012)
 - Both encoders confirmed positive for forward rotation — no inversion needed
@@ -150,11 +160,14 @@ From `src/articubot_one/config/my_controllers.yaml`:
 - Robot model orientation fixed — chassis was rendered backwards; fixed with 180° chassis_joint rotation
 - face.xacro disabled — tutorial-era visual removed
 - Dev machine (192.168.86.52) communicates with Pi (192.168.86.33) via ROS 2 DDS on `ROS_DOMAIN_ID=0`
-- SLAM with slam_toolbox complete (2026-03-18) — map saved to `~/mybot_ws/maps/my_map` (.pgm + .yaml), 200x136 @ 0.05m/pix
+- SLAM complete — new map made 2026-03-21, saved to `~/mybot_ws/maps/my_map` (.pgm + .yaml), 113x140 @ 0.05m/pix; see fix #16 for SLAM drift tuning
 - BNO055 IMU fully integrated (2026-03-18) — ros-humble-bno055 installed, I2C bus 1, address 0x28, publishing /imu/imu
 - robot_localization EKF running — fuses /diff_cont/odom + /imu/imu → /odom at 20Hz
 - imu_link added to URDF at xyz="0.004 -0.018 0.055" (80mm from front, 50mm from right edge, upper deck)
-- Next steps: Nav2
+- Nav2 launch files and params updated to Humble-compatible API (2026-03-20) — see fix #15
+- Nav2 working end-to-end (2026-03-21) — robot navigates autonomously to goals; see fix #17 for velocity increase
+- RealSense D435 partially integrated (2026-03-21) — apt packages installed, udev rules added, depth stream working; color stream broken (Pi kernel UVC driver doesn't support D435 extension units needed for intrinsics)
+- Next steps: Build librealsense from source with FORCE_RSUSB_BACKEND=ON to fix color stream (fix #18 — in progress)
 
 ### Previous validated state (2026-03-13)
 - All 7 differential drive validation checkpoints passed with old E-S Motor 34:1 units
@@ -198,6 +211,71 @@ Files changed:
   - Was: `if (A == B) pos++` → right wheel counted negative for forward rotation
   - Fixed: `if (A != B) pos++` → both wheels now count positive for forward rotation
   - Reflashed Arduino after fix
+
+### 18) RealSense D435 — librealsense source build with FORCE_RSUSB_BACKEND (2026-03-21, IN PROGRESS)
+Problem: apt-installed `ros-humble-librealsense2` compiled against kernel V4L2/UVC driver. On Pi, UVC extension unit queries (`xioctl(UVCIOC_CTRL_QUERY)`) time out, preventing RGB camera from retrieving intrinsics. Depth stream works; color stream fails with "No intrinsics available".
+
+Decision: Build librealsense from source with `-DFORCE_RSUSB_BACKEND=ON` (uses libusb directly, bypasses kernel UVC driver).
+
+Steps:
+1. Remove apt `ros-humble-librealsense2`
+2. Install build dependencies: `libusb-1.0-0-dev`, `libssl-dev`, `cmake`, `libgtk-3-dev`
+3. Clone `https://github.com/realsenseai/librealsense`
+4. Build with `-DFORCE_RSUSB_BACKEND=ON -DBUILD_EXAMPLES=OFF -DBUILD_GRAPHICAL_EXAMPLES=OFF`
+5. Install to system (`sudo make install`)
+6. Keep `ros-humble-realsense2-camera` from apt — it will link against the new lib
+7. Add udev rule for RSUSB access: `99-realsense-libusb.rules` already installed
+
+Status: Decision made 2026-03-21. Not yet executed.
+
+### 17) Nav2 velocity limits increased (2026-03-21)
+File changed:
+- `src/articubot_one/config/nav2_params.yaml` — raised max velocity from TurtleBot3 default 0.26 m/s to 0.4 m/s
+
+Changes:
+- DWB planner: `max_vel_x: 0.26` → `0.4`, `max_speed_xy: 0.26` → `0.4`
+- velocity_smoother: `max_velocity: [0.26, 0.0, 1.0]` → `[0.4, 0.0, 1.0]`, `min_velocity: [-0.26, 0.0, -1.0]` → `[-0.4, 0.0, -1.0]`
+
+Reason: robot was struggling to move at 0.26 m/s — not enough torque to overcome static friction consistently. diff_drive_controller already allows 0.5 m/s; 0.4 gives headroom below that limit.
+
+### 16) SLAM drift tuning (2026-03-21)
+File changed:
+- `src/articubot_one/config/mapper_params_online_async.yaml`
+
+Changes:
+- `minimum_time_interval: 0.5` → `0.3` (more frequent scan matching — was missing too much motion between scans)
+- `link_match_minimum_response_fine: 0.1` → `0.3` (reject weaker/ambiguous scan matches)
+- `loop_match_minimum_chain_size: 10` → `5` (loop closure kicks in sooner — needed for small rooms)
+
+Result: map drift reduced; new map saved 2026-03-21 at 113x140 @ 0.05m/pix.
+
+### 15) Nav2 launch files and params updated to Humble API (2026-03-20)
+Files changed:
+- `src/articubot_one/launch/navigation_launch.py` — rewritten to Humble nav2_bringup style: `recoveries_server` → `behavior_server`, added `smoother_server` and `velocity_smoother` to lifecycle nodes, uses `ParameterFile` wrapper
+- `src/articubot_one/launch/localization_launch.py` — rewritten to Humble nav2_bringup style: uses `ParameterFile` wrapper, default map path set to `~/mybot_ws/maps/my_map.yaml`
+- `src/articubot_one/config/nav2_params.yaml` — fully replaced with Humble-compatible params:
+  - `use_sim_time: False` everywhere
+  - `robot_model_type: "nav2_amcl::DifferentialMotionModel"` (old `"differential"` deprecated)
+  - `robot_radius: 0.17` (our robot ~156mm circumscribed radius, was 0.22 for TurtleBot3)
+  - `inflation_radius: 0.35` (reduced from 0.55, fits smaller robot in small rooms)
+  - `laser_max_range: 12.0` (RPLidar A1 M8 spec)
+  - `recoveries_server` block replaced with `behavior_server` block (nav2_behaviors/*)
+  - Added `smoother_server`, `waypoint_follower`, `velocity_smoother` sections
+  - Updated bt_navigator plugin list to full Humble set
+
+Nav2 launch sequence:
+1. Pi Terminal 1: `mybot-launch`
+2. Pi Terminal 2: `source ~/mybot_ws/install/setup.bash && ros2 launch articubot_one localization_launch.py`
+3. Pi Terminal 3: `source ~/mybot_ws/install/setup.bash && ros2 launch articubot_one navigation_launch.py`
+4. Dev machine: `rviz2` — Fixed Frame: `map`, add Map `/map`, LaserScan `/scan`, RobotModel `/robot_description`
+5. Use **2D Pose Estimate** tool to initialize AMCL (click robot location + drag heading)
+6. Use **Nav2 Goal** (or Nav2 Goal Pose) to send navigation target
+
+Key notes:
+- Localization MUST be running before RViz `map` frame exists
+- AMCL will not publish transform until initial pose is set via 2D Pose Estimate
+- velocity_smoother remaps internally: nav `cmd_vel_nav` → smoothed → `/cmd_vel` → twist_mux → `/diff_cont/cmd_vel_unstamped`
+- Nav2 confirmed receiving all topics from Pi on dev machine (ros2 topic list verified)
 
 ### 14) BNO055 IMU + robot_localization EKF integrated (2026-03-18)
 Packages installed:
@@ -502,9 +580,17 @@ Build a Mobile Robot with ROS
     ├── ros2_control extra bits                                   ✅ done
     ├── ros2_control on the real robot                           ✅ done (+ full validation 2026-03-13)
     ├── Teleoperation                                            ✅ done
-    ├── SLAM with slam_toolbox                                   ✅ done (2026-03-18) — map saved
-    ├── Navigation with Nav2                                     ⬅ NEXT
+    ├── SLAM with slam_toolbox                                   ✅ done (2026-03-18) — map saved; new map 2026-03-21
+    ├── Navigation with Nav2                                     ✅ done (2026-03-21) — robot navigates autonomously to goals
     └── Object Tracking with OpenCV                             ⬜ pending
+
+Camera hardware notes:
+- D435 detected at USB 3.2 (Bus 002 Device 002: ID 8086:0b07)
+- FW version: 5.17.0.10, Serial: 244622071235
+- Depth stream: working (640x480@15fps)
+- Color stream: broken until RSUSB backend build (fix #18)
+- launch/camera.launch.py — wraps rs_launch.py, 640x480@15fps, no pointcloud, no align_depth
+- camera included in launch_robot.launch.py
 ```
 
 ### Repositories
