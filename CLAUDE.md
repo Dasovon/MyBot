@@ -4,7 +4,12 @@
 ROS 2 Humble differential drive robot stack for a Raspberry Pi + Arduino robot using `ros2_control`, `diffdrive_arduino`, and serial motor/encoder communication.
 
 ## Environment Note
-Claude runs directly on the Raspberry Pi (`mybot`). All Bash commands execute on the Pi. No need to ask the user to run commands manually unless they involve the dev machine.
+This repo runs on two machines. Claude Code is installed on both. Know which machine you are on:
+
+- **Pi** (`mybot`, 192.168.86.33): working directory `~/mybot_ws`. Run hardware commands directly.
+- **Dev** (`192.168.86.52`): working directory `~/dev_ws`. SSH to Pi for hardware: `ssh ryan@mybot "<command>"`. Pi's hostname `mybot` resolves via mDNS — prefer `mybot` over IP.
+
+When on **dev**, use SSH for any Pi operations (launch robot, check serial, reflash Arduino, reboot, etc). Run ROS commands for dev-side nodes (EKF, Nav2, RViz) locally.
 
 ## Tech Stack
 - Ubuntu 22.04 LTS
@@ -82,6 +87,58 @@ Arduino motor controller
 
 Motor driver / drivetrain
   └── differential drive base
+```
+
+## Dev / Pi Split Architecture
+```
+Pi (mybot, 192.168.86.33) — ~/mybot_ws
+  Runs: hardware drivers only
+  ├── robot_state_publisher
+  ├── ros2_control_node + diff_cont + joint_broad
+  ├── twist_mux
+  ├── rplidar_composition  (/dev/rplidar)
+  ├── bno055               (I2C bus 1, 0x28)
+  └── realsense2_camera_node (/camera/camera/*)
+
+Dev (192.168.86.52) — ~/dev_ws
+  Runs: computation + navigation
+  ├── ekf_filter_node      (fuses /diff_cont/odom + /imu/imu → /odom)
+  ├── map_server + amcl    (localization_launch.py)
+  ├── Nav2 stack           (navigation_launch.py)
+  ├── rviz2
+  └── future: OpenCV / object tracking
+```
+
+### Launch Sequence (full stack)
+```bash
+# Pi
+ssh ryan@mybot "source ~/mybot_ws/install/setup.bash && ros2 launch articubot_one launch_robot.launch.py"
+
+# Dev — Terminal 1
+ros2 launch articubot_one dev_launch.py
+
+# Dev — Terminal 2
+ros2 launch articubot_one localization_launch.py
+
+# Dev — Terminal 3
+ros2 launch articubot_one navigation_launch.py
+
+# Dev — Terminal 4
+rviz2
+```
+
+### Dev Workspace Setup
+```bash
+mkdir -p ~/dev_ws/src && cd ~/dev_ws/src
+git clone git@github.com:Dasovon/MyBot.git articubot_one
+cd ~/dev_ws
+sudo apt install -y ros-humble-robot-localization ros-humble-navigation2 \
+  ros-humble-nav2-bringup ros-humble-realsense2-camera-msgs ros-humble-realsense2-description
+source /opt/ros/humble/setup.bash
+colcon build --symlink-install
+echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc
+echo "source ~/dev_ws/install/setup.bash" >> ~/.bashrc
+echo "export ROS_DOMAIN_ID=0" >> ~/.bashrc
 ```
 
 ## Key Config Values
