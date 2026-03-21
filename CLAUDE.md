@@ -1,5 +1,54 @@
 # CLAUDE.md
 
+## START HERE — Session Orientation
+
+Read this first at the start of every session before doing anything else.
+
+### What this project is
+A ROS 2 Humble differential drive robot (Raspberry Pi 4 + Arduino Nano) with RPLidar A1, BNO055 IMU, robot_localization EKF, Nav2 autonomous navigation, and a RealSense D435 depth camera. Based on the Articulated Robotics tutorial series.
+
+### Where we are right now (2026-03-21)
+**Nav2 is working end-to-end.** The robot navigates autonomously to goals using a saved map.
+
+**RealSense D435 is partially integrated.** Depth stream works. Color stream is broken because the apt-installed librealsense2 was compiled against the kernel V4L2/UVC driver which doesn't support the D435's extension units on the Pi. Fix: build librealsense from source with `FORCE_RSUSB_BACKEND=ON`.
+
+**The immediate next task is fix #18** — see the Exact Fix History section.
+
+### Which machine are you on?
+- If `hostname` returns `mybot` → you are on the **Pi**. Run commands directly.
+- If `hostname` returns `dev` → you are on the **dev machine**. SSH to Pi for hardware: `ssh ryan@mybot "..."`.
+
+### What runs where
+| Component | Machine |
+|-----------|---------|
+| ros2_control, motors, encoders | Pi |
+| RPLidar, BNO055 IMU, RealSense camera | Pi |
+| EKF (robot_localization) | Dev |
+| Nav2 (AMCL, planner, controller) | Dev |
+| RViz2, image processing, OpenCV | Dev |
+
+### Full launch sequence
+```bash
+# 1. Pi — hardware
+ssh ryan@mybot "source ~/mybot_ws/install/setup.bash && ros2 launch articubot_one launch_robot.launch.py"
+
+# 2. Dev — EKF
+ros2 launch articubot_one dev_launch.py
+
+# 3. Dev — localization (AMCL + map server)
+ros2 launch articubot_one localization_launch.py
+
+# 4. Dev — Nav2
+ros2 launch articubot_one navigation_launch.py
+
+# 5. Dev — RViz2
+rviz2
+# Fixed Frame: map | Add: Map /map (Durability: Transient Local), LaserScan /scan, RobotModel
+# Use 2D Pose Estimate to init AMCL, then Nav2 Goal to navigate
+```
+
+---
+
 ## Project Goal
 ROS 2 Humble differential drive robot stack for a Raspberry Pi + Arduino robot using `ros2_control`, `diffdrive_arduino`, and serial motor/encoder communication.
 
