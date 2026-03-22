@@ -245,11 +245,28 @@ From `src/articubot_one/config/my_controllers.yaml`:
 - Never change serial device, baud, motor polarity, and encoder mapping all at once during debugging.
 - Never treat tutorial comments as truth. Verify against current files.
 
-## End-of-Session Rule
-At the end of every session, Claude must update:
-1. `CLAUDE.md` — current status, fix history, tutorial progress, next steps
-2. All memory files in `/home/ryan/.claude/projects/-home-ryan-mybot-ws/memory/`
-3. Any hardware docs in `docs/` if hardware was changed
+## Preferred Workflow
+
+**Always work from dev (`dev`, 192.168.86.52, `~/dev_ws`).** Claude Code runs on dev and reaches the Pi via `ssh ryan@mybot "..."`. Never develop directly on the Pi.
+
+See `docs/workflow.md` for full launch sequence, emergency stop, and end-of-session routine.
+
+## End-of-Session Routine
+
+Claude must run this at the end of every session:
+
+1. **Stop ROS processes** on dev and Pi
+2. **Update `CLAUDE.md`** — current status, new fix history, next steps, tutorial progress
+3. **Update `docs/`** — if hardware or setup changed
+4. **Commit and push from dev:**
+   ```bash
+   cd ~/dev_ws/src/articubot_one && git add -A && git commit -m "..." && git push
+   ```
+5. **Sync Pi:**
+   ```bash
+   ssh ryan@mybot "cd ~/mybot_ws/src/articubot_one && git pull"
+   ```
+6. **Update memory files** at `/home/ryan/.claude/projects/-home-ryan-dev-ws/memory/`
 
 This applies even if the session ended without completing the task.
 
