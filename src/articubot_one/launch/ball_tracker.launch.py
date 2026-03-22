@@ -23,7 +23,7 @@ def generate_launch_description():
                 PythonLaunchDescriptionSource([os.path.join(
                     get_package_share_directory('ball_tracker'), 'launch', 'ball_tracker.launch.py')]),
                     launch_arguments={'params_file': params_path,
-                                    'image_topic': '/camera/image_raw',
+                                    'image_topic': '/camera/camera/color/image_raw',
                                     'cmd_vel_topic': '/cmd_vel_tracker',
                                     'enable_3d_tracker': 'true'}.items())
 

@@ -10,9 +10,9 @@ A ROS 2 Humble differential drive robot (Raspberry Pi 4 + Arduino Nano) with RPL
 ### Where we are right now (2026-03-21)
 **Nav2 is working end-to-end.** The robot navigates autonomously to goals using a saved map.
 
-**RealSense D435 is partially integrated.** Depth stream works. Color stream is broken because the apt-installed librealsense2 was compiled against the kernel V4L2/UVC driver which doesn't support the D435's extension units on the Pi. Fix: build librealsense from source with `FORCE_RSUSB_BACKEND=ON`.
+**RealSense D435 fully integrated.** Both depth and color streams working at 15 FPS via RSUSB backend (fix #18 complete). librealsense v2.56.4 built from source with `FORCE_RSUSB_BACKEND=ON` and installed to `/opt/ros/humble/lib/aarch64-linux-gnu/librealsense2.so.2.56.4` (replacing apt build).
 
-**The immediate next task is fix #18** — see the Exact Fix History section.
+**Next steps:** Object Tracking with OpenCV (final tutorial chapter).
 
 ### Which machine are you on?
 - If `hostname` returns `mybot` → you are on the **Pi**. Run commands directly.
@@ -272,8 +272,8 @@ This applies even if the session ended without completing the task.
 - imu_link added to URDF at xyz="0.004 -0.018 0.055" (80mm from front, 50mm from right edge, upper deck)
 - Nav2 launch files and params updated to Humble-compatible API (2026-03-20) — see fix #15
 - Nav2 working end-to-end (2026-03-21) — robot navigates autonomously to goals; see fix #17 for velocity increase
-- RealSense D435 partially integrated (2026-03-21) — apt packages installed, udev rules added, depth stream working; color stream broken (Pi kernel UVC driver doesn't support D435 extension units needed for intrinsics)
-- Next steps: Build librealsense from source with FORCE_RSUSB_BACKEND=ON to fix color stream (fix #18 — in progress)
+- RealSense D435 fully integrated (2026-03-21) — librealsense v2.56.4 built from source with FORCE_RSUSB_BACKEND=ON; apt .so replaced with RSUSB build; both depth and color streams at 15 FPS (fix #18 complete)
+- Next steps: Object Tracking with OpenCV (final tutorial chapter)
 
 ### Previous validated state (2026-03-13)
 - All 7 differential drive validation checkpoints passed with old E-S Motor 34:1 units
@@ -318,21 +318,31 @@ Files changed:
   - Fixed: `if (A != B) pos++` → both wheels now count positive for forward rotation
   - Reflashed Arduino after fix
 
-### 18) RealSense D435 — librealsense source build with FORCE_RSUSB_BACKEND (2026-03-21, IN PROGRESS)
+### 18) RealSense D435 — librealsense source build with FORCE_RSUSB_BACKEND (2026-03-21, COMPLETE)
 Problem: apt-installed `ros-humble-librealsense2` compiled against kernel V4L2/UVC driver. On Pi, UVC extension unit queries (`xioctl(UVCIOC_CTRL_QUERY)`) time out, preventing RGB camera from retrieving intrinsics. Depth stream works; color stream fails with "No intrinsics available".
 
-Decision: Build librealsense from source with `-DFORCE_RSUSB_BACKEND=ON` (uses libusb directly, bypasses kernel UVC driver).
+Solution: Build librealsense **v2.56.4** from source with `-DFORCE_RSUSB_BACKEND=ON` (uses libusb directly, bypasses kernel UVC driver). Must use v2.56.4 to match the SONAME that `ros-humble-realsense2-camera` links against (`librealsense2.so.2.56`).
 
-Steps:
-1. Remove apt `ros-humble-librealsense2`
-2. Install build dependencies: `libusb-1.0-0-dev`, `libssl-dev`, `cmake`, `libgtk-3-dev`
-3. Clone `https://github.com/realsenseai/librealsense`
-4. Build with `-DFORCE_RSUSB_BACKEND=ON -DBUILD_EXAMPLES=OFF -DBUILD_GRAPHICAL_EXAMPLES=OFF`
-5. Install to system (`sudo make install`)
-6. Keep `ros-humble-realsense2-camera` from apt — it will link against the new lib
-7. Add udev rule for RSUSB access: `99-realsense-libusb.rules` already installed
+Steps executed:
+1. `sudo apt remove ros-humble-librealsense2*`
+2. `sudo apt install libusb-1.0-0-dev libssl-dev cmake libgtk-3-dev`
+3. `git clone https://github.com/IntelRealSense/librealsense ~/librealsense && cd ~/librealsense && git checkout v2.56.4`
+4. `mkdir build && cd build && cmake .. -DFORCE_RSUSB_BACKEND=ON -DBUILD_EXAMPLES=OFF -DBUILD_GRAPHICAL_EXAMPLES=OFF -DCMAKE_BUILD_TYPE=Release`
+5. `make -j2 && sudo make install && sudo ldconfig` (use -j2 not -j4 — Pi OOMs with -j4)
+6. `sudo apt install ros-humble-realsense2-camera ros-humble-realsense2-description` (reinstalls apt v2.56.4 to /opt/ros)
+7. **Key step:** Replace the apt library with our RSUSB build (same version/SONAME, safe):
+   `sudo cp /usr/local/lib/librealsense2.so.2.56.4 /opt/ros/humble/lib/aarch64-linux-gnu/librealsense2.so.2.56.4`
+   (Backup saved at `.so.2.56.4.bak`)
+8. Udev rules: `99-realsense-libusb.rules` already installed, `0b07` entry present. `sudo udevadm control --reload-rules && sudo udevadm trigger`
 
-Status: Decision made 2026-03-21. Not yet executed.
+Result: Both depth and color streams running at 15 FPS. Topics: `/camera/camera/color/image_raw`, `/camera/camera/depth/image_rect_raw`.
+
+Key lessons:
+- `LD_LIBRARY_PATH` tricks don't work — ROS setup.bash prepends `/opt/ros/humble/lib/aarch64-linux-gnu` which overrides ldconfig
+- Must match SONAME: apt camera plugin requires `librealsense2.so.2.56` specifically
+- Build at v2.56.4 to match apt camera plugin, not latest (v2.57+)
+- RSUSB backend confirmed via `messenger-libusb.cpp` in log (no more `UVCIOC_CTRL_QUERY` errors)
+- D435 must be physically replugged after Pi reboot — doesn't always re-enumerate automatically
 
 ### 17) Nav2 velocity limits increased (2026-03-21)
 File changed:
@@ -680,7 +690,7 @@ Build a Mobile Robot with ROS
 │   ├── The Brain - Raspberry Pi                                 ✅ done
 │   ├── Power Concepts                                           ✅ done
 │   ├── Adding Lidar                                             ✅ done (2026-03-17)
-│   └── Adding a Camera                                          ⬜ pending
+│   └── Adding a Camera                                          ✅ done (2026-03-21) — RSUSB backend, both streams 15 FPS
 └── Applications
     ├── ros2_control Concepts & Simulation                       ✅ done
     ├── ros2_control extra bits                                   ✅ done
@@ -693,10 +703,11 @@ Build a Mobile Robot with ROS
 Camera hardware notes:
 - D435 detected at USB 3.2 (Bus 002 Device 002: ID 8086:0b07)
 - FW version: 5.17.0.10, Serial: 244622071235
-- Depth stream: working (640x480@15fps)
-- Color stream: broken until RSUSB backend build (fix #18)
+- Depth stream: working (640x480@15fps) ✅
+- Color stream: working (640x480@15fps) ✅ — RSUSB backend (fix #18 complete)
 - launch/camera.launch.py — wraps rs_launch.py, 640x480@15fps, no pointcloud, no align_depth
 - camera included in launch_robot.launch.py
+- NOTE: D435 may need physical replug after Pi reboot to enumerate on USB
 ```
 
 ### Repositories
