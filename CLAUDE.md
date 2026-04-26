@@ -693,14 +693,19 @@ Source: `Hardware/mybot/` — CAD renders (mybot_dim.png and orthographic views)
 ### Confirmed working pin mapping — Adafruit TB6612 (swapped from L298N 2026-04-25)
 TB6612 → Arduino Nano:
 ```
-PWMA → D5   (PWM, left motor speed)
-AIN2 → D6   (left motor direction B)
-AIN1 → D7   (left motor direction A)
-BIN1 → D8   (right motor direction A)
-BIN2 → D9   (right motor direction B)
-PWMB → D10  (PWM, right motor speed)
+VCC  → 5V   (sets logic thresholds for all signal pins — must match MCU logic voltage)
+PWMA → D5   (PWM, right motor speed)
+AIN2 → D6   (right motor direction B)
+AIN1 → D7   (right motor direction A)
+BIN1 → D8   (left motor direction A)
+BIN2 → D9   (left motor direction B)
+PWMB → D10  (PWM, left motor speed)
 STBY → not wired (Adafruit breakout has onboard pullup — defaults HIGH)
 ```
+Motor channel assignment: Motor A (PWMA/AIN1/AIN2) = RIGHT motor, Motor B (PWMB/BIN1/BIN2) = LEFT motor.
+
+VCC logic threshold note: All signal pins (AIN1/2, BIN1/2, PWMA/B, STBY) are validated against VCC. Arduino Nano is 5V logic → VCC must be 5V. Max safe input = VCC + 0.5V = 5.5V. (For an ESP32 at 3.3V logic, connect VCC to 3.3V — no level shifter needed.)
+
 Firmware define: `TB6612_MOTOR_DRIVER`
 Direction validation needed after first power-on with teleop.
 If a motor runs reversed, swap its output wires (Red/White) at the TB6612 terminals.

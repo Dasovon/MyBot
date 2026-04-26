@@ -125,6 +125,44 @@ Memory files live at:
 └── serial/                 ← branch: newans_ros2
 ```
 
+## ESP32 micro-ROS Testing (branch: feature/esp32-microros)
+
+Replaces the Arduino + Pi BNO055 I2C path. Pi-side EKF, Nav2, AMCL unchanged.
+
+**On Pi — instead of the normal hardware nodes, run:**
+```bash
+# Start micro-ROS agent (bridges ESP32 ↔ ROS2)
+ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyUSB0
+```
+
+**Then launch the rest of the stack normally:**
+```bash
+# Dev — EKF, localization, Nav2, RViz2 — identical to normal sequence
+ros2 launch articubot_one dev_launch.py
+ros2 launch articubot_one localization_launch.py
+ros2 launch articubot_one navigation_launch.py
+rviz2
+```
+
+**Flash firmware to ESP32:**
+```bash
+cd src/esp32_microros
+pio run --target upload
+```
+
+**Verify topics are live:**
+```bash
+ros2 topic hz /diff_cont/odom       # expect ~20 Hz
+ros2 topic hz /imu/imu              # expect ~20 Hz
+ros2 topic echo /diff_cont/odom --once
+```
+
+**To switch back to Arduino stack:** unplug ESP32, plug in Arduino, use normal `mybot-launch`.
+
+See `docs/pin-mapping.md` for full ESP32 wiring table.
+
+---
+
 ## Pi-only setup (not in git)
 
 These changes live only on the Pi and must be re-applied if Pi is reimaged:

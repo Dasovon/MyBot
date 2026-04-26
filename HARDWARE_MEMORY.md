@@ -84,12 +84,12 @@ ROS config: config/bno055_params.yaml
 
 Replaced L298N with Adafruit TB6612 breakout (2026-04-25). Same physical Arduino pins.
 
-PWMA = D5   → left motor PWM speed
-AIN2 = D6   → left motor direction B
-AIN1 = D7   → left motor direction A
-BIN1 = D8   → right motor direction A
-BIN2 = D9   → right motor direction B
-PWMB = D10  → right motor PWM speed
+PWMA = D5   → right motor PWM speed   (Motor A = RIGHT)
+AIN2 = D6   → right motor direction B
+AIN1 = D7   → right motor direction A
+BIN1 = D8   → left motor direction A  (Motor B = LEFT)
+BIN2 = D9   → left motor direction B
+PWMB = D10  → left motor PWM speed
 
 STBY → not wired; Adafruit breakout has onboard pullup (defaults HIGH = enabled)
 
@@ -243,9 +243,48 @@ Hardware/
 
 ---
 
-## Future Hardware Paths (Planned)
+## ESP32 + micro-ROS (Experimental — branch: feature/esp32-microros)
 
-• ESP32 + micro‑ROS instead of Arduino
+Firmware scaffold at `src/esp32_microros/` (PlatformIO project).
+Replaces Arduino + direct Pi I2C with a single ESP32 handling motors and BNO055.
+Pi-side stack (EKF, Nav2, AMCL) requires no changes — same topics.
+
+ESP32-DevKitC → TB6612:
+```
+VCC  → 3V3   (logic threshold — must match MCU voltage)
+PWMA → GPIO25  (right motor speed)
+AIN2 → GPIO26  (right motor dir B)
+AIN1 → GPIO27  (right motor dir A)
+BIN1 → GPIO32  (left motor dir A)
+BIN2 → GPIO33  (left motor dir B)
+PWMB → GPIO14  (left motor speed)
+STBY → not wired (onboard pullup)
+VM   → 12V motor supply
+```
+
+ESP32-DevKitC → BNO055:
+```
+SDA  → GPIO21
+SCL  → GPIO22
+Vin  → 3V3
+GND  → GND
+```
+
+Encoders → ESP32 (input-only pins, no pullup needed):
+```
+Left  A → GPIO36,  Left  B → GPIO39
+Right A → GPIO34,  Right B → GPIO35
+```
+
+To test: run micro-ROS agent on Pi instead of ros2_control/bno055 nodes:
+```bash
+ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyUSB0
+```
+
+---
+
+## Future Hardware Paths
+
 • Hoverboard motor platform migration
 
 ---
