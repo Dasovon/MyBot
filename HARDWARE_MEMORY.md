@@ -23,7 +23,7 @@ Arduino Motor Controller
 ├── Reads wheel encoders
 └── Drives motor driver
 
-Motor Driver (L298N)
+Motor Driver (Adafruit TB6612)
 └── Left / Right DC Gear Motors (DC12V 130RPM JGA25-371, actual ratio 45:1)
 
 RPLidar A1 M8
@@ -80,25 +80,30 @@ ROS config: config/bno055_params.yaml
 
 ---
 
-## Motor Driver Pin Mapping (Arduino → L298N)
+## Motor Driver Pin Mapping (Arduino → Adafruit TB6612)
 
-ENA = 5
-ENB = 10
+Replaced L298N with Adafruit TB6612 breakout (2026-04-25). Same physical Arduino pins.
 
-IN1 = 6
-IN2 = 7
-IN3 = 8
-IN4 = 9
+PWMA = D5   → left motor PWM speed
+AIN2 = D6   → left motor direction B
+AIN1 = D7   → left motor direction A
+BIN1 = D8   → right motor direction A
+BIN2 = D9   → right motor direction B
+PWMB = D10  → right motor PWM speed
 
-Meaning:
+STBY → not wired; Adafruit breakout has onboard pullup (defaults HIGH = enabled)
 
-ENA → left motor PWM enable
-ENB → right motor PWM enable
+Firmware define: TB6612_MOTOR_DRIVER (was L298_MOTOR_DRIVER)
+File: src/ros_arduino_bridge/ROSArduinoBridge/ROSArduinoBridge.ino
 
-IN1 / IN2 → left motor direction
-IN3 / IN4 → right motor direction
+Direction logic:
+  Forward:  xIN1=HIGH, xIN2=LOW + PWM
+  Backward: xIN1=LOW,  xIN2=HIGH + PWM
+  Coast:    xIN1=LOW,  xIN2=LOW
+  Brake:    xIN1=HIGH, xIN2=HIGH
 
-Direction corrected in firmware (IN1↔IN2, IN3↔IN4 swapped so both wheels run forward).
+Motor direction vs ROS forward: validate with teleop after first power-on.
+If a motor runs reversed, swap its motor power wires (Red/White) at the TB6612 output terminals.
 
 ---
 
@@ -235,10 +240,8 @@ Hardware/
 
 ## Future Hardware Paths (Planned)
 
-• Replace L298N with modern MOSFET driver
 • ESP32 + micro‑ROS instead of Arduino
 • Hoverboard motor platform migration
-• RealSense perception
 
 ---
 

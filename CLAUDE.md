@@ -273,7 +273,8 @@ This applies even if the session ended without completing the task.
 ---
 
 ## Current Status (2026-03-21)
-- Motors swapped to DC12V 130RPM Amazon JGA25-371 encoder gear motors (actual ratio 45:1)
+- Motor driver swapped from L298N to Adafruit TB6612 (2026-04-25) — firmware flashed and responding; direction validation pending after motor power wires connected
+- Motors: DC12V 130RPM Amazon JGA25-371 encoder gear motors (actual ratio 45:1)
 - `enc_counts_per_rev = 1010` — re-validated 2026-03-17 with corrected wheel_radius=0.034 (3 wall-guided runs avg: 1006/1016/1012)
 - Both encoders confirmed positive for forward rotation — no inversion needed
 - URDF updated to actual robot dimensions (robot_core.xacro, lidar.xacro, my_controllers.yaml)
@@ -334,6 +335,21 @@ Files changed:
   - Was: `if (A == B) pos++` → right wheel counted negative for forward rotation
   - Fixed: `if (A != B) pos++` → both wheels now count positive for forward rotation
   - Reflashed Arduino after fix
+
+### 19) Motor driver swap: L298N → Adafruit TB6612 (2026-04-25)
+Files changed:
+- `src/ros_arduino_bridge/ROSArduinoBridge/motor_driver.h` — added `TB6612_MOTOR_DRIVER` ifdef block with same physical pins (D5–D10)
+- `src/ros_arduino_bridge/ROSArduinoBridge/motor_driver.ino` — added TB6612 `initMotorController()` and `setMotorSpeed()` (same logic as L298N)
+- `src/ros_arduino_bridge/ROSArduinoBridge/ROSArduinoBridge.ino` — changed `#define L298_MOTOR_DRIVER` → `#define TB6612_MOTOR_DRIVER`
+
+Pin mapping (unchanged physical pins):
+- D5 = PWMA, D6 = AIN2, D7 = AIN1, D8 = BIN1, D9 = BIN2, D10 = PWMB
+- STBY not wired — Adafruit breakout has onboard pullup (defaults HIGH)
+
+Firmware compiled and flashed. Arduino confirmed responding (serial `e` → `0 0`).
+Motor power wires not yet connected at time of flash — direction validation pending.
+
+Note: `src/ros_arduino_bridge/` on the Pi is a separate repo from `src/articubot_one/`. Firmware edits live in `articubot_one/src/ros_arduino_bridge/` (git-tracked) and must be SCP'd to Pi's `~/mybot_ws/src/ros_arduino_bridge/` before flashing.
 
 ### 18) RealSense D435 — librealsense source build with FORCE_RSUSB_BACKEND (2026-03-21, COMPLETE)
 Problem: apt-installed `ros-humble-librealsense2` compiled against kernel V4L2/UVC driver. On Pi, UVC extension unit queries (`xioctl(UVCIOC_CTRL_QUERY)`) time out, preventing RGB camera from retrieving intrinsics. Depth stream works; color stream fails with "No intrinsics available".
@@ -657,16 +673,20 @@ Source: `Hardware/mybot/` — CAD renders (mybot_dim.png and orthographic views)
 - firmware expects carriage return
 - serial user should be in `dialout`
 
-### Confirmed working pin mapping (flashed and verified 2026-03-13)
-L298N → Arduino Nano:
+### Confirmed working pin mapping — Adafruit TB6612 (swapped from L298N 2026-04-25)
+TB6612 → Arduino Nano:
 ```
-ENA → D5   (PWM, left motor enable)
-IN1 → D6   (left motor direction)
-IN2 → D7   (left motor direction)
-IN3 → D8   (right motor direction)
-IN4 → D9   (right motor direction)
-ENB → D10  (PWM, right motor enable)
+PWMA → D5   (PWM, left motor speed)
+AIN2 → D6   (left motor direction B)
+AIN1 → D7   (left motor direction A)
+BIN1 → D8   (right motor direction A)
+BIN2 → D9   (right motor direction B)
+PWMB → D10  (PWM, right motor speed)
+STBY → not wired (Adafruit breakout has onboard pullup — defaults HIGH)
 ```
+Firmware define: `TB6612_MOTOR_DRIVER`
+Direction validation needed after first power-on with teleop.
+If a motor runs reversed, swap its output wires (Red/White) at the TB6612 terminals.
 Encoders:
 ```
 Left  encoder A → D2  (INT0)
