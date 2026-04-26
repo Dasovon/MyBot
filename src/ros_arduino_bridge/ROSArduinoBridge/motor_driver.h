@@ -11,6 +11,15 @@
   #define RIGHT_MOTOR_ENABLE   10  // ENB - PWM
 #endif
 
+#ifdef TB6612_MOTOR_DRIVER
+  #define LEFT_MOTOR_ENABLE    5   // PWMA
+  #define LEFT_MOTOR_FORWARD   7   // AIN1
+  #define LEFT_MOTOR_BACKWARD  6   // AIN2
+  #define RIGHT_MOTOR_FORWARD  9   // BIN2
+  #define RIGHT_MOTOR_BACKWARD 8   // BIN1
+  #define RIGHT_MOTOR_ENABLE   10  // PWMB
+#endif
+
 void initMotorController();
 void setMotorSpeed(int i, int spd);
 void setMotorSpeeds(int leftSpeed, int rightSpeed);

@@ -62,8 +62,8 @@
    /* Encoders directly attached to Arduino board */
    #define ARDUINO_ENC_COUNTER
 
-   /* L298 Motor driver*/
-   #define L298_MOTOR_DRIVER
+   /* TB6612 Motor driver (Adafruit breakout, replaces L298N 2026-04-25) */
+   #define TB6612_MOTOR_DRIVER
 #endif
 
 //#define USE_SERVOS  // Enable use of PWM servos as defined in servos.h
