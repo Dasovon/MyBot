@@ -93,7 +93,7 @@ PWMB = D10  → right motor PWM speed
 
 STBY → not wired; Adafruit breakout has onboard pullup (defaults HIGH = enabled)
 
-Firmware define: TB6612_MOTOR_DRIVER (was L298_MOTOR_DRIVER)
+Firmware define: TB6612_MOTOR_DRIVER
 File: src/ros_arduino_bridge/ROSArduinoBridge/ROSArduinoBridge.ino
 
 Direction logic:
@@ -102,8 +102,13 @@ Direction logic:
   Coast:    xIN1=LOW,  xIN2=LOW
   Brake:    xIN1=HIGH, xIN2=HIGH
 
-Motor direction vs ROS forward: validate with teleop after first power-on.
-If a motor runs reversed, swap its motor power wires (Red/White) at the TB6612 output terminals.
+**STATUS: First TB6612 unit damaged — replacement needed.**
+Cause: 12V motor supply reached AIN1/BIN1 logic input pins (max is 5.5V).
+Symptom: xIN1 pins read ~2V when driven HIGH — below 3.5V logic threshold — CW direction non-functional.
+Confirmed via multimeter: BIN1 = 11.9V with motor power connected.
+
+BEFORE INSTALLING REPLACEMENT: verify VM wire has no breadboard bridge to AIN1 or BIN1.
+After installing new chip: validate motor direction with teleop. If a motor runs reversed, swap its output wires (Red/White) at the TB6612 terminals.
 
 ---
 

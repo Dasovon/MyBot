@@ -273,7 +273,11 @@ This applies even if the session ended without completing the task.
 ---
 
 ## Current Status (2026-03-21)
-- Motor driver swapped from L298N to Adafruit TB6612 (2026-04-25) — firmware flashed and responding; direction validation pending after motor power wires connected
+- Motor driver: Adafruit TB6612 installed (2026-04-25) — **first unit damaged, awaiting replacement chip**
+  - Root cause: 12V motor supply reached AIN1/BIN1 logic input pins during initial wiring (overvoltage, max is 5.5V)
+  - Symptom: xIN1 pins read ~2V instead of 5V when driven HIGH — below logic threshold, CW direction non-functional
+  - Firmware and wiring are correct; only the chip needs replacing
+  - Before installing new chip: verify VM wire has no breadboard bridge to AIN1 or BIN1
 - Motors: DC12V 130RPM Amazon JGA25-371 encoder gear motors (actual ratio 45:1)
 - `enc_counts_per_rev = 1010` — re-validated 2026-03-17 with corrected wheel_radius=0.034 (3 wall-guided runs avg: 1006/1016/1012)
 - Both encoders confirmed positive for forward rotation — no inversion needed
@@ -336,18 +340,31 @@ Files changed:
   - Fixed: `if (A != B) pos++` → both wheels now count positive for forward rotation
   - Reflashed Arduino after fix
 
-### 19) Motor driver swap: L298N → Adafruit TB6612 (2026-04-25)
+### 19) Motor driver swap: L298N → Adafruit TB6612 (2026-04-25, chip damaged — replacement needed)
 Files changed:
-- `src/ros_arduino_bridge/ROSArduinoBridge/motor_driver.h` — added `TB6612_MOTOR_DRIVER` ifdef block with same physical pins (D5–D10)
-- `src/ros_arduino_bridge/ROSArduinoBridge/motor_driver.ino` — added TB6612 `initMotorController()` and `setMotorSpeed()` (same logic as L298N)
+- `src/ros_arduino_bridge/ROSArduinoBridge/motor_driver.h` — added `TB6612_MOTOR_DRIVER` ifdef block with corrected pin mapping (motors/directions were swapped from initial attempt)
+- `src/ros_arduino_bridge/ROSArduinoBridge/motor_driver.ino` — added TB6612 `initMotorController()` and `setMotorSpeed()`
 - `src/ros_arduino_bridge/ROSArduinoBridge/ROSArduinoBridge.ino` — changed `#define L298_MOTOR_DRIVER` → `#define TB6612_MOTOR_DRIVER`
 
-Pin mapping (unchanged physical pins):
-- D5 = PWMA, D6 = AIN2, D7 = AIN1, D8 = BIN1, D9 = BIN2, D10 = PWMB
+Firmware pin mapping (motor_driver.h TB6612_MOTOR_DRIVER block):
+```
+LEFT_MOTOR_ENABLE   = 10  // PWMB
+LEFT_MOTOR_FORWARD  = 9   // BIN2
+LEFT_MOTOR_BACKWARD = 8   // BIN1
+RIGHT_MOTOR_ENABLE  = 5   // PWMA
+RIGHT_MOTOR_FORWARD = 6   // AIN2
+RIGHT_MOTOR_BACKWARD = 7  // AIN1
+```
+Validated via encoder tests: LEFT forward (CCW, BIN2=HIGH) → left encoder +. RIGHT forward direction (AIN1=HIGH) untested — chip failed before right CW could be confirmed.
 - STBY not wired — Adafruit breakout has onboard pullup (defaults HIGH)
 
-Firmware compiled and flashed. Arduino confirmed responding (serial `e` → `0 0`).
-Motor power wires not yet connected at time of flash — direction validation pending.
+Diagnosis: first TB6612 unit damaged by 12V motor supply reaching AIN1 and BIN1 logic input pins.
+- Max logic input voltage: VCC + 0.5V = 5.5V. 12V destroyed the xIN1 input gates.
+- Symptom: xIN1 pins pulled to ~2V when Arduino drives HIGH (below 3.5V logic threshold) → CW direction non-functional.
+- xIN2 pins unaffected (CCW direction worked correctly).
+- Confirmed via multimeter: BIN1 read 11.9V with motor supply connected, 2V without.
+
+**Before installing replacement chip:** verify VM wire has no breadboard bridge to AIN1 or BIN1.
 
 Note: `src/ros_arduino_bridge/` on the Pi is a separate repo from `src/articubot_one/`. Firmware edits live in `articubot_one/src/ros_arduino_bridge/` (git-tracked) and must be SCP'd to Pi's `~/mybot_ws/src/ros_arduino_bridge/` before flashing.
 
