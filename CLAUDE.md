@@ -7,12 +7,21 @@ Read this first at the start of every session before doing anything else.
 ### What this project is
 A ROS 2 Humble differential drive robot (Raspberry Pi 4 + Arduino Nano) with RPLidar A1, BNO055 IMU, robot_localization EKF, Nav2 autonomous navigation, and a RealSense D435 depth camera. Based on the Articulated Robotics tutorial series.
 
-### Where we are right now (2026-03-21)
+### Where we are right now (2026-04-26)
 **Nav2 is working end-to-end.** The robot navigates autonomously to goals using a saved map.
 
 **RealSense D435 fully integrated.** Both depth and color streams working at 15 FPS via RSUSB backend (fix #18 complete). librealsense v2.56.4 built from source with `FORCE_RSUSB_BACKEND=ON` and installed to `/opt/ros/humble/lib/aarch64-linux-gnu/librealsense2.so.2.56.4` (replacing apt build).
 
-**Next steps:** Object Tracking with OpenCV (final tutorial chapter).
+**TB6612 first unit damaged — awaiting replacement chip.** Firmware and wiring are correct. Before installing new chip: verify VM wire has no breadboard bridge to AIN1 or BIN1.
+
+**ESP32 + micro-ROS experiment in progress** (branch: `feature/esp32-microros`). Scaffold firmware and four component test sketches are written and ready to flash. Waiting on TB6612 replacement before running motor tests. See fix #20.
+
+**Next steps:**
+1. Flash `test_bno055` and `test_encoders` to verify ESP32 wiring (no motor driver needed)
+2. Flash `test_microros` to validate Pi ↔ ESP32 transport
+3. Install replacement TB6612 chip, run `test_motors`
+4. If all tests pass, validate full `src/esp32_microros/src/main.cpp` firmware end-to-end
+5. Object Tracking with OpenCV (final tutorial chapter) — after ESP32 experiment resolves
 
 ### Which machine are you on?
 - If `hostname` returns `mybot` → you are on the **Pi**. Run commands directly.
@@ -89,6 +98,10 @@ When on **dev**, use SSH for any Pi operations (launch robot, check serial, refl
 - `src/serial` → branch `newans_ros2`
 - `src/ros_arduino_bridge` → branch `main` but **legacy / abandoned for runtime architecture**
 
+### Feature branches in progress
+- `feature/esp32-microros` — ESP32 + micro-ROS replacement for Arduino + Pi BNO055. Contains main firmware and test sketches. Not merged to main yet.
+- `claude/document-vcc-logic-thresholds-Uh9FQ` — TB6612 wiring table label fix + VCC documentation. Merged into `feature/esp32-microros`.
+
 ## Directory Structure
 ```text
 mybot_ws/
@@ -97,17 +110,18 @@ mybot_ws/
 │   │   ├── launch/
 │   │   ├── config/
 │   │   ├── description/
+│   │   ├── docs/                    ← workflow.md, pin-mapping.md, realsense-rsusb-setup.md
 │   │   └── worlds/
+│   ├── esp32_microros/              ← ESP32 + micro-ROS (branch: feature/esp32-microros)
+│   │   ├── platformio.ini
+│   │   ├── src/main.cpp             ← full robot firmware
+│   │   └── test/
+│   │       ├── test_bno055/         ← BNO055 I2C verification
+│   │       ├── test_encoders/       ← encoder pulse counting and direction
+│   │       ├── test_motors/         ← TB6612 motor test (needs replacement chip)
+│   │       └── test_microros/       ← micro-ROS transport test (needs Pi agent)
 │   ├── diffdrive_arduino/
-│   │   ├── hardware/
-│   │   ├── bringup/
-│   │   ├── description/
-│   │   └── doc/
 │   ├── serial/
-│   │   ├── include/
-│   │   ├── src/
-│   │   ├── tests/
-│   │   └── examples/
 │   └── ros_arduino_bridge/
 │       └── ROSArduinoBridge/
 ├── build/
@@ -272,7 +286,9 @@ This applies even if the session ended without completing the task.
 
 ---
 
-## Current Status (2026-03-21)
+## Current Status (2026-04-26)
+- **ESP32 micro-ROS experiment started (2026-04-26)** — see fix #20. Branch `feature/esp32-microros`. Main firmware and four test sketches written, not yet flashed. Flash with PlatformIO: `cd src/esp32_microros/test/<test_name> && pio run --target upload`. Test order: bno055 → encoders → microros → motors.
+- TB6612 wiring table left/right labels corrected (2026-04-26) — Motor A (PWMA/AIN1/AIN2) = RIGHT, Motor B (PWMB/BIN1/BIN2) = LEFT. Fixed in CLAUDE.md, HARDWARE_MEMORY.md, and docs/pin-mapping.md.
 - Motor driver: Adafruit TB6612 installed (2026-04-25) — **first unit damaged, awaiting replacement chip**
   - Root cause: 12V motor supply reached AIN1/BIN1 logic input pins during initial wiring (overvoltage, max is 5.5V)
   - Symptom: xIN1 pins read ~2V instead of 5V when driven HIGH — below logic threshold, CW direction non-functional
@@ -367,6 +383,50 @@ Diagnosis: first TB6612 unit damaged by 12V motor supply reaching AIN1 and BIN1 
 **Before installing replacement chip:** verify VM wire has no breadboard bridge to AIN1 or BIN1.
 
 Note: `src/ros_arduino_bridge/` on the Pi is a separate repo from `src/articubot_one/`. Firmware edits live in `articubot_one/src/ros_arduino_bridge/` (git-tracked) and must be SCP'd to Pi's `~/mybot_ws/src/ros_arduino_bridge/` before flashing.
+
+### 20) TB6612 wiring table label correction + VCC documentation (2026-04-26)
+Files changed:
+- `CLAUDE.md` — wiring table in "Confirmed working pin mapping" section: PWMA/AIN1/AIN2 corrected to RIGHT motor, PWMB/BIN1/BIN2 corrected to LEFT motor. VCC added to table. VCC logic threshold note added (VCC must match MCU logic voltage; ESP32 → 3.3V, no level shifter needed).
+- `HARDWARE_MEMORY.md` — same label correction in motor driver section
+- `docs/pin-mapping.md` — new file, full pin tables for both Arduino and ESP32 hardware paths
+
+Root cause: the original wiring table described the channel labels opposite to the firmware pin defines. Firmware (`motor_driver.h` TB6612_MOTOR_DRIVER block) assigns `RIGHT_MOTOR_*` to Motor A (PWMA/AIN1/AIN2) and `LEFT_MOTOR_*` to Motor B (PWMB/BIN1/BIN2). The table had them swapped.
+
+### 21) ESP32 + micro-ROS experiment scaffolded (2026-04-26)
+Branch: `feature/esp32-microros`
+
+Goal: replace Arduino Nano + Pi-direct BNO055 with a single ESP32 handling motors and IMU via micro-ROS. Pi-side stack (EKF, Nav2, AMCL) requires zero changes — same topics.
+
+Files created:
+- `src/esp32_microros/platformio.ini` — ESP32-DevKitC, Arduino 3.x, micro-ROS humble, Adafruit BNO055
+- `src/esp32_microros/src/main.cpp` — full firmware: encoders + PID + odometry + BNO055 + micro-ROS pub/sub
+- `src/esp32_microros/test/test_bno055/` — BNO055 I2C test, serial output, calibration status
+- `src/esp32_microros/test/test_encoders/` — encoder pulse counting, direction verification, mismatch detection
+- `src/esp32_microros/test/test_motors/` — TB6612 test with safety checklist, sequence + manual control
+- `src/esp32_microros/test/test_microros/` — micro-ROS transport test, heartbeat publisher, LED state machine
+
+ESP32 pin mapping (full detail in `docs/pin-mapping.md`):
+- TB6612: VCC→3V3, PWMA→GPIO25(R), AIN2→GPIO26, AIN1→GPIO27, BIN1→GPIO32, BIN2→GPIO33, PWMB→GPIO14(L)
+- BNO055: SDA→GPIO21, SCL→GPIO22, Vin→3V3
+- Encoders: L_A→GPIO36, L_B→GPIO39, R_A→GPIO34, R_B→GPIO35 (all input-only pins)
+
+Topics (identical to current Arduino stack):
+- Publishes: `/diff_cont/odom` (nav_msgs/Odometry), `/imu/imu` (sensor_msgs/Imu)
+- Subscribes: `/diff_cont/cmd_vel_unstamped` (geometry_msgs/Twist)
+
+To run micro-ROS agent on Pi (replaces ros2_control + bno055 nodes):
+```bash
+ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyUSB0
+```
+
+To flash a test sketch:
+```bash
+cd src/esp32_microros/test/test_bno055   # or test_encoders, test_motors, test_microros
+pio run --target upload
+pio device monitor
+```
+
+Status: firmware written, not yet flashed. Waiting on TB6612 replacement chip for motor tests. BNO055 and encoder tests can run now.
 
 ### 18) RealSense D435 — librealsense source build with FORCE_RSUSB_BACKEND (2026-03-21, COMPLETE)
 Problem: apt-installed `ros-humble-librealsense2` compiled against kernel V4L2/UVC driver. On Pi, UVC extension unit queries (`xioctl(UVCIOC_CTRL_QUERY)`) time out, preventing RGB camera from retrieving intrinsics. Depth stream works; color stream fails with "No intrinsics available".
