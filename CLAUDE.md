@@ -7,12 +7,19 @@ Read this first at the start of every session before doing anything else.
 ### What this project is
 A ROS 2 Humble differential drive robot (Raspberry Pi 4 + Arduino Nano) with RPLidar A1, BNO055 IMU, robot_localization EKF, Nav2 autonomous navigation, and a RealSense D435 depth camera. Based on the Articulated Robotics tutorial series.
 
-### Where we are right now (2026-03-21)
+### Where we are right now (2026-04-27)
 **Nav2 is working end-to-end.** The robot navigates autonomously to goals using a saved map.
 
-**RealSense D435 fully integrated.** Both depth and color streams working at 15 FPS via RSUSB backend (fix #18 complete). librealsense v2.56.4 built from source with `FORCE_RSUSB_BACKEND=ON` and installed to `/opt/ros/humble/lib/aarch64-linux-gnu/librealsense2.so.2.56.4` (replacing apt build).
+**RealSense D435 fully integrated.** Both depth and color streams working at 15 FPS via RSUSB backend (fix #18 complete).
 
-**Next steps:** Object Tracking with OpenCV (final tutorial chapter).
+**ESP32 migration in progress.** Replacing Arduino Nano + Pi split with ESP32 running micro-ROS directly. TB6612 replacement chip still awaited. ESP32 DevKitC V4 successfully flashed with `test_bno055` sketch from Windows machine (2026-04-27). BNO055 not yet wired to ESP32 — serial output not yet verified.
+
+**Next steps:**
+1. Wire BNO055 to ESP32 (SDA→GPIO21, SCL→GPIO22, 3.3V, GND) and confirm serial monitor shows sensor data
+2. Run encoder test sketch to validate ESP32 encoder ISRs
+3. Run motor test sketch to validate TB6612 direction (after replacement chip installed)
+4. Flash full micro-ROS firmware and run micro-ROS agent on Pi
+5. Object Tracking with OpenCV (final tutorial chapter)
 
 ### Which machine are you on?
 - If `hostname` returns `mybot` → you are on the **Pi**. Run commands directly.
@@ -272,7 +279,9 @@ This applies even if the session ended without completing the task.
 
 ---
 
-## Current Status (2026-03-21)
+## Current Status (2026-04-27)
+- **Windows machine set up for ESP32 development (2026-04-27):** VS Code + PlatformIO + CP2102 driver + Git installed; repo cloned to `C:\Users\Ryan\MyBot`; branch `claude/fix-chat-broken-0rKIu` checked out
+- **test_bno055 sketch flashed successfully (2026-04-27):** ESP32 DevKitC V4 (WROOM-32D, CP2102) programmed via PlatformIO; had to hold BOOT button during upload (auto-reset not reliable); serial monitor not yet checked — BNO055 not wired yet
 - Motor driver: Adafruit TB6612 installed (2026-04-25) — **first unit damaged, awaiting replacement chip**
   - Root cause: 12V motor supply reached AIN1/BIN1 logic input pins during initial wiring (overvoltage, max is 5.5V)
   - Symptom: xIN1 pins read ~2V instead of 5V when driven HIGH — below logic threshold, CW direction non-functional
@@ -367,6 +376,33 @@ Diagnosis: first TB6612 unit damaged by 12V motor supply reaching AIN1 and BIN1 
 **Before installing replacement chip:** verify VM wire has no breadboard bridge to AIN1 or BIN1.
 
 Note: `src/ros_arduino_bridge/` on the Pi is a separate repo from `src/articubot_one/`. Firmware edits live in `articubot_one/src/ros_arduino_bridge/` (git-tracked) and must be SCP'd to Pi's `~/mybot_ws/src/ros_arduino_bridge/` before flashing.
+
+### 22) Windows machine setup + test_bno055 sketch (2026-04-27)
+Goal: flash a minimal BNO055 I2C test to ESP32 DevKitC V4 from Windows machine before wiring full hardware.
+
+Windows setup steps:
+1. CP210x Universal Windows Driver — from silabs.com, installed via `silabser.inf` right-click → Install
+2. Git for Windows — from git-scm.com, all defaults
+3. Repo cloned: `https://github.com/Dasovon/MyBot.git` → `C:\Users\Ryan\MyBot`
+4. Branch: `git checkout claude/fix-chat-broken-0rKIu`
+5. PlatformIO IDE extension installed in VS Code
+6. Opened folder: `C:\Users\Ryan\MyBot\src\esp32_microros\test\test_bno055`
+7. Upload — first attempt failed: "Wrong boot mode detected (0x13)". Fix: hold BOOT button on ESP32, click Upload, release BOOT when "Connecting......" appears
+8. Upload successful
+
+Files added:
+- `src/esp32_microros/test/test_bno055/platformio.ini` — ESP32dev, Arduino framework, Adafruit BNO055 lib only (no micro-ROS)
+- `src/esp32_microros/test/test_bno055/src/main.cpp` — prints euler angles + calibration status at 2Hz; prints error + retries if BNO055 not found on I2C
+
+ESP32 board details: DevKitC V4, WROOM-32D module, CP2102 USB chip
+Expected serial output (115200 baud) when BNO055 not wired: `[!!] BNO055 not found on I2C bus`
+Expected output when wired correctly: `Heading: ... Roll: ... Pitch: ... | Calib sys=X gyro=X accel=X mag=X`
+
+BNO055 wiring for ESP32:
+- SDA → GPIO21
+- SCL → GPIO22
+- VIN → 3.3V
+- GND → GND
 
 ### 18) RealSense D435 — librealsense source build with FORCE_RSUSB_BACKEND (2026-03-21, COMPLETE)
 Problem: apt-installed `ros-humble-librealsense2` compiled against kernel V4L2/UVC driver. On Pi, UVC extension unit queries (`xioctl(UVCIOC_CTRL_QUERY)`) time out, preventing RGB camera from retrieving intrinsics. Depth stream works; color stream fails with "No intrinsics available".
