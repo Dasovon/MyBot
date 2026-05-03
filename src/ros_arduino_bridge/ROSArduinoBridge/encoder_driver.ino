@@ -34,7 +34,7 @@
   /* LEFT encoder ISR - triggered on any change of D2 (INT0)
      Reads B signal from D4 to determine direction */
   void leftEncoderISR() {
-    if (digitalRead(LEFT_ENC_PIN_A) != digitalRead(LEFT_ENC_PIN_B))
+    if (digitalRead(LEFT_ENC_PIN_A) == digitalRead(LEFT_ENC_PIN_B))
       left_enc_pos++;
     else
       left_enc_pos--;

@@ -14,8 +14,8 @@
 #ifdef TB6612_MOTOR_DRIVER
   // Physical wiring: PWMA/AIN drives right motor, PWMB/BIN drives left motor
   #define LEFT_MOTOR_ENABLE    10  // PWMB
-  #define LEFT_MOTOR_FORWARD   9   // BIN2
-  #define LEFT_MOTOR_BACKWARD  8   // BIN1
+  #define LEFT_MOTOR_FORWARD   8   // BIN1
+  #define LEFT_MOTOR_BACKWARD  9   // BIN2
   #define RIGHT_MOTOR_ENABLE   5   // PWMA
   #define RIGHT_MOTOR_FORWARD  7   // AIN1
   #define RIGHT_MOTOR_BACKWARD 6   // AIN2
