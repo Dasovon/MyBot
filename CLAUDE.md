@@ -7,17 +7,19 @@ Read this first at the start of every session before doing anything else.
 ### What this project is
 A ROS 2 Humble differential drive robot (Raspberry Pi 4 + Arduino Nano) with RPLidar A1, BNO055 IMU, robot_localization EKF, Nav2 autonomous navigation, and a RealSense D435 depth camera. Based on the Articulated Robotics tutorial series.
 
-### Where we are right now (2026-04-27)
+### Where we are right now (2026-05-03)
 **Nav2 is working end-to-end.** The robot navigates autonomously to goals using a saved map.
 
 **RealSense D435 fully integrated.** Both depth and color streams working at 15 FPS via RSUSB backend (fix #18 complete).
 
-**ESP32 migration in progress.** Replacing Arduino Nano + Pi split with ESP32 running micro-ROS directly. TB6612 replacement chip still awaited. ESP32 DevKitC V4 successfully flashed with `test_bno055` sketch from Windows machine (2026-04-27). BNO055 not yet wired to ESP32 — serial output not yet verified.
+**TB6612 replacement installed and working (fix #20 complete, 2026-05-03).** Both motors spin in both directions. Encoder signs correct: positive for forward, negative for reverse.
+
+**ESP32 migration in progress.** Replacing Arduino Nano + Pi split with ESP32 running micro-ROS directly. ESP32 DevKitC V4 successfully flashed with `test_bno055` sketch from Windows machine (2026-04-27). BNO055 not yet wired to ESP32 — serial output not yet verified.
 
 **Next steps:**
-1. Wire BNO055 to ESP32 (SDA→GPIO21, SCL→GPIO22, 3.3V, GND) and confirm serial monitor shows sensor data
-2. Run encoder test sketch to validate ESP32 encoder ISRs
-3. Run motor test sketch to validate TB6612 direction (after replacement chip installed)
+1. Test teleop to confirm robot moves forward when commanded forward (if reversed, swap motor output wires at TB6612 terminals)
+2. Wire BNO055 to ESP32 (SDA→GPIO21, SCL→GPIO22, 3.3V, GND) and confirm serial monitor shows sensor data
+3. Run encoder test sketch to validate ESP32 encoder ISRs
 4. Flash full micro-ROS firmware and run micro-ROS agent on Pi
 5. Object Tracking with OpenCV (final tutorial chapter)
 
@@ -282,11 +284,10 @@ This applies even if the session ended without completing the task.
 ## Current Status (2026-04-27)
 - **Windows machine set up for ESP32 development (2026-04-27):** VS Code + PlatformIO + CP2102 driver + Git installed; repo cloned to `C:\Users\Ryan\MyBot`; branch `claude/fix-chat-broken-0rKIu` checked out
 - **test_bno055 sketch flashed successfully (2026-04-27):** ESP32 DevKitC V4 (WROOM-32D, CP2102) programmed via PlatformIO; had to hold BOOT button during upload (auto-reset not reliable); serial monitor not yet checked — BNO055 not wired yet
-- Motor driver: Adafruit TB6612 installed (2026-04-25) — **first unit damaged, awaiting replacement chip**
-  - Root cause: 12V motor supply reached AIN1/BIN1 logic input pins during initial wiring (overvoltage, max is 5.5V)
-  - Symptom: xIN1 pins read ~2V instead of 5V when driven HIGH — below logic threshold, CW direction non-functional
-  - Firmware and wiring are correct; only the chip needs replacing
-  - Before installing new chip: verify VM wire has no breadboard bridge to AIN1 or BIN1
+- **Motor driver: Adafruit TB6612 replacement installed and validated (2026-05-03, fix #20)** — both motors work in both directions, encoder signs correct
+  - First unit damaged 2026-04-25: 12V motor supply reached AIN1/BIN1 logic pins (max 5.5V)
+  - Root cause of "one direction only" on replacement: motor wires placed on motor output pad + GND pad instead of both on MOTORA/MOTORB pads
+  - Left encoder ISR inverted (A==B → A!=B) to give positive counts for forward rotation
 - Motors: DC12V 130RPM Amazon JGA25-371 encoder gear motors (actual ratio 45:1)
 - `enc_counts_per_rev = 1010` — re-validated 2026-03-17 with corrected wheel_radius=0.034 (3 wall-guided runs avg: 1006/1016/1012)
 - Both encoders confirmed positive for forward rotation — no inversion needed
@@ -376,6 +377,24 @@ Diagnosis: first TB6612 unit damaged by 12V motor supply reaching AIN1 and BIN1 
 **Before installing replacement chip:** verify VM wire has no breadboard bridge to AIN1 or BIN1.
 
 Note: `src/ros_arduino_bridge/` on the Pi is a separate repo from `src/articubot_one/`. Firmware edits live in `articubot_one/src/ros_arduino_bridge/` (git-tracked) and must be SCP'd to Pi's `~/mybot_ws/src/ros_arduino_bridge/` before flashing.
+
+### 20) TB6612 replacement — motor wiring fix + encoder direction fix (2026-05-03)
+Root cause: motor output wires were placed with one wire on a motor output pad (AO2 or BO2) and the other on the GND pad between MOTORA/MOTORB sections, instead of both wires on the correct MOTORA (AO1+AO2) or MOTORB (BO1+BO2) pads. This caused 0V differential in one direction (both pads = GND) and 12V in the other (output pad = VM, GND pad = GND).
+
+Fix: moved both motor wire pairs to correct pads — right motor to AO1+AO2, left motor to BO1+BO2.
+
+Also reverted right motor Arduino pins from debug-test positions (D11/A0/A1) back to original:
+```
+RIGHT_MOTOR_ENABLE  = 5   // PWMA
+RIGHT_MOTOR_FORWARD = 7   // AIN1
+RIGHT_MOTOR_BACKWARD = 6  // AIN2
+```
+
+Left encoder ISR inverted in `encoder_driver.ino` — was counting negative for forward rotation:
+- Before: `if (A == B) left_enc_pos++`
+- After:  `if (A != B) left_enc_pos++`
+
+Validated: all four directions (left fwd/rev, right fwd/rev) give non-zero encoder counts. Positive counts for forward commands, negative for reverse.
 
 ### 22) Windows machine setup + test_bno055 sketch (2026-04-27)
 Goal: flash a minimal BNO055 I2C test to ESP32 DevKitC V4 from Windows machine before wiring full hardware.
@@ -743,8 +762,8 @@ Motor channel assignment: Motor A (PWMA/AIN1/AIN2) = RIGHT motor, Motor B (PWMB/
 VCC logic threshold note: All signal pins (AIN1/2, BIN1/2, PWMA/B, STBY) are validated against VCC. Arduino Nano is 5V logic → VCC must be 5V. Max safe input = VCC + 0.5V = 5.5V. (For an ESP32 at 3.3V logic, connect VCC to 3.3V — no level shifter needed.)
 
 Firmware define: `TB6612_MOTOR_DRIVER`
-Direction validation needed after first power-on with teleop.
-If a motor runs reversed, swap its output wires (Red/White) at the TB6612 terminals.
+Validated 2026-05-03: both motors spin in both directions, encoder counts positive for forward.
+If robot moves backward when commanded forward, swap that motor's output wires at the TB6612 terminals.
 Encoders:
 ```
 Left  encoder A → D2  (INT0)
