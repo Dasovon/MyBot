@@ -17,8 +17,7 @@ A ROS 2 Humble differential drive robot (Raspberry Pi 4 + Arduino Nano) with RPL
 **ESP32 migration in progress.** Replacing Arduino Nano + Pi split with ESP32 running micro-ROS directly. ESP32 DevKitC V4 successfully flashed with `test_bno055` sketch from Windows machine (2026-04-27). BNO055 not yet wired to ESP32 — serial output not yet verified.
 
 **Next steps:**
-1. Test teleop to confirm robot moves forward when commanded forward (if reversed, swap motor output wires at TB6612 terminals)
-2. Wire BNO055 to ESP32 (SDA→GPIO21, SCL→GPIO22, 3.3V, GND) and confirm serial monitor shows sensor data
+1. Wire BNO055 to ESP32 (SDA→GPIO21, SCL→GPIO22, 3.3V, GND) and confirm serial monitor shows sensor data
 3. Run encoder test sketch to validate ESP32 encoder ISRs
 4. Flash full micro-ROS firmware and run micro-ROS agent on Pi
 5. Object Tracking with OpenCV (final tutorial chapter)
@@ -390,11 +389,19 @@ RIGHT_MOTOR_FORWARD = 7   // AIN1
 RIGHT_MOTOR_BACKWARD = 6  // AIN2
 ```
 
-Left encoder ISR inverted in `encoder_driver.ino` — was counting negative for forward rotation:
-- Before: `if (A == B) left_enc_pos++`
-- After:  `if (A != B) left_enc_pos++`
+Left motor direction and encoder ISR tuned through two rounds of testing:
+1. First flash: encoder ISR changed to `A!=B` — encoder counts positive for forward, but left motor physically ran backward
+2. Teleop test: `i` caused rotation (left wheel backward, right forward) → left motor inverted
+3. Fix: swapped LEFT_MOTOR_FORWARD/BACKWARD (BIN2↔BIN1), reverted encoder ISR back to `A==B`
 
-Validated: all four directions (left fwd/rev, right fwd/rev) give non-zero encoder counts. Positive counts for forward commands, negative for reverse.
+Final validated firmware (motor_driver.h):
+```
+LEFT_MOTOR_FORWARD  = 8   // BIN1
+LEFT_MOTOR_BACKWARD = 9   // BIN2
+```
+Final encoder ISR (encoder_driver.ino): `if (A == B) left_enc_pos++`
+
+Teleop validated: `i` drives forward, `j`/`l` turn correctly.
 
 ### 22) Windows machine setup + test_bno055 sketch (2026-04-27)
 Goal: flash a minimal BNO055 I2C test to ESP32 DevKitC V4 from Windows machine before wiring full hardware.
