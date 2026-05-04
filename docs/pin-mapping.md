@@ -10,25 +10,40 @@ Motor B (PWMB/BIN1/BIN2) drives the **LEFT** motor.
 | VCC | 5V | Logic supply (sets threshold for all signal pins) |
 | VM | 12V motor supply | Motor power |
 | PWMA | D5 | Right motor speed (PWM) |
-| AIN2 | D6 | Right motor direction B |
-| AIN1 | D7 | Right motor direction A |
-| BIN1 | D8 | Left motor direction A |
-| BIN2 | D9 | Left motor direction B |
+| AIN1 | D7 | Right motor **FORWARD** |
+| AIN2 | D6 | Right motor **BACKWARD** |
+| BIN1 | D8 | Left motor **FORWARD** |
+| BIN2 | D9 | Left motor **BACKWARD** |
 | PWMB | D10 | Left motor speed (PWM) |
 | STBY | not wired | Adafruit breakout has onboard pullup — defaults HIGH (enabled) |
 | GND | GND | Common ground |
 
+Motor output wiring (critical — do NOT use GND pad between sections):
+- Right motor wires → **AO1 + AO2** pads
+- Left motor wires  → **BO1 + BO2** pads
+
 Firmware define: `TB6612_MOTOR_DRIVER`
 File: `src/ros_arduino_bridge/ROSArduinoBridge/ROSArduinoBridge.ino`
 
-Direction truth table:
+Firmware pin defines (motor_driver.h):
+```
+RIGHT_MOTOR_ENABLE   = 5   // PWMA
+RIGHT_MOTOR_FORWARD  = 7   // AIN1
+RIGHT_MOTOR_BACKWARD = 6   // AIN2
+LEFT_MOTOR_ENABLE    = 10  // PWMB
+LEFT_MOTOR_FORWARD   = 8   // BIN1
+LEFT_MOTOR_BACKWARD  = 9   // BIN2
+```
 
+TB6612 direction truth table:
 | xIN1 | xIN2 | Result |
 |------|------|--------|
-| HIGH | LOW | Forward |
-| LOW | HIGH | Reverse |
-| LOW | LOW | Coast |
+| HIGH | LOW  | Forward (OUT1=VM, OUT2=GND) |
+| LOW  | HIGH | Reverse (OUT1=GND, OUT2=VM) |
+| LOW  | LOW  | Coast |
 | HIGH | HIGH | Brake |
+
+Validated 2026-05-03: teleop `i`=forward, `j`/`l`=turn correctly.
 
 ### Encoder Pins (Arduino)
 
@@ -39,9 +54,18 @@ Direction truth table:
 | Right encoder A | D3 | INT1 — hardware interrupt |
 | Right encoder B | D12 | |
 
-ISR direction (validated — fix #7):
-- Left: `A == B on CHANGE` → forward (+)
-- Right: `A != B on CHANGE` → forward (+)
+ISR direction (validated 2026-05-03):
+- Left:  `A == B on CHANGE` → increment (forward = +)
+- Right: `A != B on CHANGE` → increment (forward = +)
+
+Velocity limits (my_controllers.yaml):
+- linear max:  ±0.3 m/s
+- angular max: ±3.35 rad/s  (= 2 × 0.3 / 0.179 — equal wheel speed at full linear and full spin)
+
+Velocity tracking (validated 2026-05-03, robot free to move on floor):
+- Forward 100%: 98% of commanded wheel speed achieved
+- Spin 100%:    95% of commanded wheel speed achieved
+- Both modes behave the same — motors have ample torque for the robot weight
 
 ---
 

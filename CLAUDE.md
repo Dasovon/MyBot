@@ -280,13 +280,14 @@ This applies even if the session ended without completing the task.
 
 ---
 
-## Current Status (2026-04-27)
+## Current Status (2026-05-03)
 - **Windows machine set up for ESP32 development (2026-04-27):** VS Code + PlatformIO + CP2102 driver + Git installed; repo cloned to `C:\Users\Ryan\MyBot`; branch `claude/fix-chat-broken-0rKIu` checked out
 - **test_bno055 sketch flashed successfully (2026-04-27):** ESP32 DevKitC V4 (WROOM-32D, CP2102) programmed via PlatformIO; had to hold BOOT button during upload (auto-reset not reliable); serial monitor not yet checked — BNO055 not wired yet
-- **Motor driver: Adafruit TB6612 replacement installed and validated (2026-05-03, fix #20)** — both motors work in both directions, encoder signs correct
-  - First unit damaged 2026-04-25: 12V motor supply reached AIN1/BIN1 logic pins (max 5.5V)
-  - Root cause of "one direction only" on replacement: motor wires placed on motor output pad + GND pad instead of both on MOTORA/MOTORB pads
-  - Left encoder ISR inverted (A==B → A!=B) to give positive counts for forward rotation
+- **Motor driver: Adafruit TB6612 replacement fully validated (2026-05-03, fix #20+21):**
+  - Both motors run in both directions, encoder signs correct
+  - Teleop confirmed: `i`=forward, `j`/`l`=turn
+  - Velocity limits: linear ±0.3 m/s, angular ±3.35 rad/s (matched to equal wheel speed)
+  - Spin-in-place on the ground is friction-limited to ~1 rad/s (tire scrub) — this is physics, not a bug
 - Motors: DC12V 130RPM Amazon JGA25-371 encoder gear motors (actual ratio 45:1)
 - `enc_counts_per_rev = 1010` — re-validated 2026-03-17 with corrected wheel_radius=0.034 (3 wall-guided runs avg: 1006/1016/1012)
 - Both encoders confirmed positive for forward rotation — no inversion needed
@@ -402,6 +403,22 @@ LEFT_MOTOR_BACKWARD = 9   // BIN2
 Final encoder ISR (encoder_driver.ino): `if (A == B) left_enc_pos++`
 
 Teleop validated: `i` drives forward, `j`/`l` turn correctly.
+
+### 21) Velocity limits tuned + spinning validated (2026-05-03)
+Files changed:
+- `src/articubot_one/config/my_controllers.yaml` — linear max 0.5→0.3 m/s, angular max 1.0→3.35 rad/s
+- `src/articubot_one/config/nav2_params.yaml` — DWB and velocity_smoother limits matched
+
+Formula: `angular_max = 2 × linear_max / wheel_separation = 2 × 0.3 / 0.179 = 3.35 rad/s`
+This ensures full-speed spinning uses the same wheel velocity as full-speed straight driving.
+
+Validated with automated wheel velocity test (robot free to move on floor):
+- FWD_100: 98% of commanded wheel speed
+- SPIN_100: 95% of commanded wheel speed
+- Both motors symmetric, left/right within 0.001 m/s of each other
+
+Note: holding the robot body while spinning creates lateral tire scrub → hard plateau at ~0.085 m/s.
+This is NOT a firmware/hardware limit — robot must be free to rotate for normal behavior.
 
 ### 22) Windows machine setup + test_bno055 sketch (2026-04-27)
 Goal: flash a minimal BNO055 I2C test to ESP32 DevKitC V4 from Windows machine before wiring full hardware.
