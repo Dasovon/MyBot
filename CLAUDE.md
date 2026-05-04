@@ -12,7 +12,7 @@ A ROS 2 Humble differential drive robot (Raspberry Pi 4 + Arduino Nano) with RPL
 
 **RealSense D435 fully integrated.** Both depth and color streams working at 15 FPS via RSUSB backend (fix #18 complete).
 
-**TB6612 replacement installed and working (fix #20 complete, 2026-05-03).** Both motors spin in both directions. Encoder signs correct: positive for forward, negative for reverse.
+**TB6612 replacement fully validated (fix #20+21+23 complete, 2026-05-03).** Both motors run in both directions, encoder signs correct, velocity tracking 88–98% at operating speeds. BNO055 IMU axes confirmed: x = forward, z = yaw. Circle test: 0.94 IMU/cmd ratio, 24.6 cm closure error (open-loop).
 
 **ESP32 migration in progress.** Replacing Arduino Nano + Pi split with ESP32 running micro-ROS directly. ESP32 DevKitC V4 successfully flashed with `test_bno055` sketch from Windows machine (2026-04-27). BNO055 not yet wired to ESP32 — serial output not yet verified.
 
@@ -423,6 +423,25 @@ Left/right wheels symmetric within 0.002 m/s across all steps.
 
 Note: holding the robot body while spinning creates lateral tire scrub → hard plateau at ~0.085 m/s.
 This is NOT a firmware/hardware limit — robot must be free to rotate for normal behavior.
+
+### 23) BNO055 IMU axis validation + circle test (2026-05-03)
+Combined motor + IMU test (imu_motor_test.py) ran the same velocity sequence as wheel_vel_test.py while recording all 6 IMU axes. Circle test (circle_test.py) drove a clockwise 2.5 ft (0.762 m) diameter circle and measured closure error.
+
+**IMU axis results:**
+- Forward motion (FWD_100): linear acceleration dominant on **x-axis** (positive = forward). z ≈ -9.8 m/s² (gravity).
+- Clockwise spin (SPIN_100): angular velocity dominant on **z-axis** (negative = clockwise). x ≈ 0, y ≈ 0.
+- IMU x = robot forward, IMU z = robot yaw axis. Axes correct — placement_axis_remap P1 confirmed, no changes needed.
+
+**Circle test results (clockwise, open-loop):**
+- Command: linear = 0.20 m/s, angular = -0.525 rad/s (= 0.20 / 0.381)
+- Duration: 11.97 s (circumference 2.394 m)
+- IMU gyro z average: **-0.494 rad/s** (clockwise = negative, as expected)
+- IMU/cmd ratio: **0.94** (consistent with 94–98% velocity tracking seen in wheel tests)
+- IMU yaw delta: ≈ -339° (gyro integral: -0.494 × 11.97 = -5.91 rad) — confirms ~6% angular undershoot
+- Closure error: **24.6 cm** — expected for open-loop with ~6% angular undershoot
+- Odometry and IMU readings fully consistent with each other
+
+Simple `yaw_end - yaw_start` wraps at ±180° for a full circle — gyro integral is the reliable metric.
 
 ### 22) Windows machine setup + test_bno055 sketch (2026-04-27)
 Goal: flash a minimal BNO055 I2C test to ESP32 DevKitC V4 from Windows machine before wiring full hardware.

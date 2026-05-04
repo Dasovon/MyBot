@@ -78,6 +78,12 @@ ROS config: config/bno055_params.yaml
 - frame_id: imu_link
 - operation_mode: 0x0C (NDOF — full sensor fusion)
 
+Axis validation (2026-05-03):
+- IMU x-axis = robot forward (acceleration positive on x when driving forward)
+- IMU z-axis = robot yaw (gyro z negative for clockwise rotation)
+- placement_axis_remap: P1 (confirmed correct, no changes needed)
+- Circle test: gyro z = -0.494 rad/s at -0.525 rad/s commanded → IMU/cmd ratio 0.94
+
 ---
 
 ## Motor Driver Pin Mapping (Arduino → Adafruit TB6612)

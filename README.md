@@ -4,6 +4,22 @@ ROS 2 Humble differential drive robot — Raspberry Pi 4 + Arduino Nano, with Na
 
 Based on the [Articulated Robotics](https://articulatedrobotics.xyz/category/build-a-mobile-robot-with-ros/) tutorial series.
 
+## Current Status (2026-05-03)
+
+| Subsystem | Status |
+|-----------|--------|
+| TB6612 motor driver + encoders | ✅ Validated — both directions, encoder signs correct |
+| Velocity limits | ✅ Tuned — linear ±0.3 m/s, angular ±3.35 rad/s |
+| Velocity tracking (50–100%) | ✅ 88–98%, symmetric L/R within 0.002 m/s |
+| Teleop | ✅ `i`=forward, `j`/`l`=turn |
+| BNO055 IMU | ✅ Axis validated — x=forward, z=yaw, ratio 0.94 |
+| Circle test (2.5 ft, open-loop) | ✅ 24.6 cm closure error, IMU/cmd ratio 0.94 |
+| RPLidar A1 | ✅ Scanning |
+| robot_localization EKF | ✅ Fusing odom + IMU → /odom |
+| SLAM + Nav2 | ✅ Autonomous navigation to goals |
+| RealSense D435 | ✅ Depth + color at 15 FPS (RSUSB backend) |
+| ESP32 micro-ROS | 🔄 In progress — branch feature/esp32-microros |
+
 ## Hardware
 
 | Component | Details |
