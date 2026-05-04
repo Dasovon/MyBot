@@ -17,10 +17,12 @@ A ROS 2 Humble differential drive robot (Raspberry Pi 4 + Arduino Nano) with RPL
 **ESP32 migration in progress.** Replacing Arduino Nano + Pi split with ESP32 running micro-ROS directly. ESP32 DevKitC V4 successfully flashed with `test_bno055` sketch from Windows machine (2026-04-27). BNO055 not yet wired to ESP32 — serial output not yet verified.
 
 **Next steps:**
-1. Wire BNO055 to ESP32 (SDA→GPIO21, SCL→GPIO22, 3.3V, GND) and confirm serial monitor shows sensor data
-3. Run encoder test sketch to validate ESP32 encoder ISRs
-4. Flash full micro-ROS firmware and run micro-ROS agent on Pi
-5. Object Tracking with OpenCV (final tutorial chapter)
+1. Test RPLidar with new motor/IMU setup — full stack bringup, verify scan data still clean
+2. Calibrate all sensors together for accurate positioning — EKF tuning, AMCL convergence with new velocity limits
+3. Wire BNO055 to ESP32 (SDA→GPIO21, SCL→GPIO22, 3.3V, GND) and confirm serial monitor shows sensor data
+4. Run encoder test sketch to validate ESP32 encoder ISRs
+5. Flash full micro-ROS firmware and run micro-ROS agent on Pi
+6. Object Tracking with OpenCV (final tutorial chapter)
 
 ### Which machine are you on?
 - If `hostname` returns `mybot` → you are on the **Pi**. Run commands directly.
