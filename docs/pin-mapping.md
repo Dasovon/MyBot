@@ -62,10 +62,13 @@ Velocity limits (my_controllers.yaml):
 - linear max:  ±0.3 m/s
 - angular max: ±3.35 rad/s  (= 2 × 0.3 / 0.179 — equal wheel speed at full linear and full spin)
 
-Velocity tracking (validated 2026-05-03, robot free to move on floor):
-- Forward 100%: 98% of commanded wheel speed achieved
-- Spin 100%:    95% of commanded wheel speed achieved
-- Both modes behave the same — motors have ample torque for the robot weight
+Velocity tracking (validated 2026-05-03, 3 runs, robot free to move on floor):
+  Speed   Forward  Spin
+  25%     83%      69%   ← motor deadband at low PWM, normal
+  50%     92%      88%
+  75%     97%      93%
+  100%    98%      96%
+Left/right within 0.002 m/s. Operating range (50–100%) tracks 88–98% for both modes.
 
 ---
 

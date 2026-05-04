@@ -287,7 +287,8 @@ This applies even if the session ended without completing the task.
   - Both motors run in both directions, encoder signs correct
   - Teleop confirmed: `i`=forward, `j`/`l`=turn
   - Velocity limits: linear ±0.3 m/s, angular ±3.35 rad/s (matched to equal wheel speed)
-  - Spin-in-place on the ground is friction-limited to ~1 rad/s (tire scrub) — this is physics, not a bug
+  - Tracking: 88–98% at operating speeds (50–100%), symmetric left/right within 0.002 m/s
+  - Low-speed deadband (25% = ~69–83%) is normal for DC motors at low PWM
 - Motors: DC12V 130RPM Amazon JGA25-371 encoder gear motors (actual ratio 45:1)
 - `enc_counts_per_rev = 1010` — re-validated 2026-03-17 with corrected wheel_radius=0.034 (3 wall-guided runs avg: 1006/1016/1012)
 - Both encoders confirmed positive for forward rotation — no inversion needed
@@ -412,10 +413,13 @@ Files changed:
 Formula: `angular_max = 2 × linear_max / wheel_separation = 2 × 0.3 / 0.179 = 3.35 rad/s`
 This ensures full-speed spinning uses the same wheel velocity as full-speed straight driving.
 
-Validated with automated wheel velocity test (robot free to move on floor):
-- FWD_100: 98% of commanded wheel speed
-- SPIN_100: 95% of commanded wheel speed
-- Both motors symmetric, left/right within 0.001 m/s of each other
+Validated with automated wheel velocity test (3 consistent runs, robot free to move on floor):
+  Speed   Forward  Spin
+  25%     83%      69%   ← motor deadband at low PWM, normal for DC motors
+  50%     92%      88%
+  75%     97%      93%
+  100%    98%      96%
+Left/right wheels symmetric within 0.002 m/s across all steps.
 
 Note: holding the robot body while spinning creates lateral tire scrub → hard plateau at ~0.085 m/s.
 This is NOT a firmware/hardware limit — robot must be free to rotate for normal behavior.

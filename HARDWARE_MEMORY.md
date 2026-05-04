@@ -152,12 +152,17 @@ Velocity limits (my_controllers.yaml):
   linear max:  0.3 m/s   (each wheel at 0.3 m/s)
   angular max: 3.35 rad/s  (= 2 × 0.3 / 0.179 — matched to linear for equal wheel speed)
 
-Velocity tracking validation (2026-05-03, robot free to move):
-  FWD_100:  exp=±0.300  act=±0.295  (98%)
-  SPIN_100: exp=±0.300  act=±0.286  (95%)
-Both modes track commanded wheel velocity within 5% at full speed.
-Note: holding the robot body while spinning forces lateral tire scrub — very high friction,
-causes apparent plateau. Robot must be free to rotate for normal behavior.
+Velocity tracking validation (2026-05-03, 3 consistent runs, robot free to move on floor):
+  Speed   Forward  Spin
+  25%     83%      69%   ← motor deadband at low PWM — normal for DC motors
+  50%     92%      88%
+  75%     97%      93%
+  100%    98%      96%
+Left/right wheels symmetric within 0.002 m/s across all steps.
+Operating range (50–100%) tracks 88–98% for both modes.
+
+Note: holding the robot body while spinning creates lateral tire scrub → hard plateau at ~0.085 m/s.
+This is NOT a motor/firmware limit — robot must be free to rotate for normal behavior.
 
 ---
 
