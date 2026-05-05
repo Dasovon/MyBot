@@ -20,6 +20,8 @@ def generate_launch_description():
             'enable_pointcloud':         'false',
             'align_depth.enable':        'false',
             'initial_reset':             'true',
+            'qos_overrides./camera/camera/color/image_raw.publisher.durability': 'volatile',
+            'qos_overrides./camera/camera/depth/image_rect_raw.publisher.durability': 'volatile',
         }.items()
     )
 
