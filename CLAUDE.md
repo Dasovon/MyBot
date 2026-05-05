@@ -20,9 +20,11 @@ A ROS 2 Humble differential drive robot (Raspberry Pi 4 + Arduino Nano) with RPL
 
 **Next steps:**
 1. Wire BNO055 to ESP32 (SDA→GPIO21, SCL→GPIO22, 3.3V, GND) and confirm serial monitor shows sensor data
-2. Run encoder test sketch to validate ESP32 encoder ISRs
-3. Flash full micro-ROS firmware and run micro-ROS agent on Pi
-4. Object Tracking with OpenCV (final tutorial chapter)
+2. Test Nav2 autonomous navigation on Pi — send goal poses, verify robot navigates to targets
+3. Run encoder test sketch to validate ESP32 encoder ISRs
+4. Flash full micro-ROS firmware and run micro-ROS agent on Pi
+5. Object Tracking with OpenCV (final tutorial chapter)
+6. Jetson Nano setup (Docker + ROS 2 Humble + CUDA)
 
 ### Which machine are you on?
 - If `hostname` returns `mybot` → you are on the **Pi**. Run commands directly.
