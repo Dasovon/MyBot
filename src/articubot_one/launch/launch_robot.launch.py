@@ -4,7 +4,7 @@ from ament_index_python.packages import get_package_share_directory
 
 
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription, TimerAction
+from launch.actions import IncludeLaunchDescription, TimerAction, ExecuteProcess
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command
 from launch.actions import RegisterEventHandler
@@ -110,10 +110,18 @@ def generate_launch_description():
                 )])
     )
 
-    camera = IncludeLaunchDescription(
+    realsense_reset = ExecuteProcess(
+        cmd=['/home/ryan/reset_realsense.sh'],
+        output='screen'
+    )
+
+    camera = TimerAction(
+        period=6.0,
+        actions=[IncludeLaunchDescription(
                 PythonLaunchDescriptionSource([os.path.join(
                     get_package_share_directory(package_name),'launch','camera.launch.py'
                 )])
+        )]
     )
 
     imu = Node(
@@ -127,6 +135,7 @@ def generate_launch_description():
 
     # Launch them all!
     return LaunchDescription([
+        realsense_reset,
         rsp,
         # joystick,
         twist_mux,
