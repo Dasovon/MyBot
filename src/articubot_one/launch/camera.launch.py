@@ -19,7 +19,8 @@ def generate_launch_description():
             'depth_module.depth_profile': '640x480x15',
             'enable_pointcloud':         'false',
             'align_depth.enable':        'false',
-            'initial_reset':             'true',
+            'enable_infra1':             'false',
+            'enable_infra2':             'false',
             'qos_overrides./camera/camera/color/image_raw.publisher.durability': 'volatile',
             'qos_overrides./camera/camera/depth/image_rect_raw.publisher.durability': 'volatile',
         }.items()

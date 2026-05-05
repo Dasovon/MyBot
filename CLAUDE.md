@@ -10,16 +10,27 @@ A ROS 2 Humble differential drive robot (Raspberry Pi 4 + Arduino Nano) with RPL
 ### Where we are right now (2026-05-05)
 **Nav2 autonomous navigation confirmed working (2026-05-05).** New room map made, Nav2 goal sent programmatically → SUCCEEDED. Robot navigates autonomously to goal poses.
 
+**RealSense D435 camera streaming confirmed working (2026-05-05).**
+Color and depth images reach the dev machine. See fix #24 for the full story.
+- Color: ~7 fps on dev machine, ~12 fps on Pi
+- Depth: ~11 fps on dev machine, ~15 fps on Pi
+- IR streams disabled (not needed for object tracking; saves USB bandwidth)
+- Camera is currently on USB 2.0 (fell from USB 3.0 during this session's uhubctl experiments). A Pi reboot will restore USB 3.0. The authorization reset script works on both paths.
+
+**⚠️ DO NOT run `sudo uhubctl -l 2 -p 2 -a off` on the camera's USB 3.0 port** — this causes the camera to fall back to the USB 2.0 hub and it will NOT return to USB 3.0 without a Pi reboot.
+
 **Current hardware architecture (2026-05-05):**
 - Arduino (CH340, /dev/arduino, 57600 baud): motor driver only — cmd_vel → motors + encoder odom
 - BNO055: wired directly to Pi I2C-1 (GPIO 2/3), addr 0x28 — temporary until ESP32 migration
 - RPLIDAR: /dev/rplidar (CP210x, 115200 baud)
+- RealSense D435: USB, streaming depth + color at 640x480x15fps (IR disabled)
 - ESP32: future replacement for Arduino — will take over motors/encoders + BNO055 + INA219 via micro-ROS; not started yet
 
 **All sensors confirmed healthy (2026-05-05):**
 - RPLIDAR: Express mode, 4kHz/10Hz, 12m range, Health OK
 - Arduino: responding at 57600 baud, encoders and reset commands OK
 - BNO055: chip ID verified, gyro/accel/mag all 3/3 calibrated
+- RealSense D435: depth + color streaming confirmed
 
 **Map updated (2026-05-05).** New map saved: 232×321 @ 0.025 m/pix at `~/mybot_ws/maps/my_map` (Pi and dev). Copy lives at `~/mybot_ws/maps/` on dev machine.
 
@@ -320,6 +331,65 @@ This applies even if the session ended without completing the task.
 - Teleop working via `ros2 run teleop_twist_keyboard teleop_twist_keyboard`
 
 ## Exact Fix History That Matters
+
+### 24) RealSense D435 camera images reaching dev machine (2026-05-05)
+
+**Problem:** Camera node crashed immediately with `No intrinsics available` / `set_xu(ctrl=1) failed! Numerical argument out of domain` after any kill-9 restart. Images not visible on dev machine even when camera was running.
+
+**Root causes (three separate issues, all fixed):**
+1. **XU endpoint stall**: After kill-9, the camera's UVC extension unit control endpoint gets stuck (EAGAIN = resource busy). Neither sysfs unbind/bind, nor uhubctl power cycle, nor `initial_reset: true` reliably cleared it. **Fix:** USB authorization reset (deauth → reauth forces USB port reset which clears endpoint state on the firmware side).
+2. **USB 2.0 bandwidth**: When uhubctl power-cycles the USB 3.0 hub port, the camera re-enumerates on the USB 2.0 companion path (~480 Mbps). Depth + Color + IR1 + IR2 streams exceed USB 2.0 bandwidth. **Fix:** Disabled IR streams (`enable_infra1: false`, `enable_infra2: false`) — not needed for object tracking.
+3. **DDS QoS mismatch**: Camera publisher used TRANSIENT_LOCAL durability; dev machine subscribers use VOLATILE → incompatible, no images cross network. **Fix:** QoS override to VOLATILE on both color and depth topics.
+4. **`initial_reset: true`**: Caused a soft firmware reset mid-node-startup (re-enumeration to different port) that left the color sensor in a bad intrinsics state. **Fix:** Removed.
+
+**Files changed:**
+- `launch/camera.launch.py`:
+  - Removed `initial_reset: true`
+  - Added `enable_infra1: false`, `enable_infra2: false`
+  - Added QoS volatile overrides for color and depth topics
+- `~/reset_realsense.sh` (Pi, not in git):
+  - Rewrote to use authorization reset (dynamic device path discovery by vendor/product ID)
+  - Removes sysfs unbind/bind and uhubctl — those caused USB path changes
+- `/etc/sudoers.d/uhubctl` (Pi, not in git):
+  - Added `NOPASSWD: /usr/bin/tee /sys/bus/usb/devices/*/authorized`
+
+**⚠️ CRITICAL: Do NOT use `sudo uhubctl -l 2 -p 2 -a off`** — this causes the camera to fall from USB 3.0 (Hub 2, 5Gbps) to USB 2.0 (hub 1-1, 480Mbps) and it will not return to USB 3.0 without a Pi reboot.
+
+**Reset script (`~/reset_realsense.sh`):**
+```bash
+#!/bin/bash
+# Fixes RSUSB symlink, then auth-resets D435 to clear endpoint stalls
+RSUSB_LIB=/opt/ros/humble/lib/aarch64-linux-gnu/librealsense2.so.2.56
+TARGET=librealsense2.so.2.56.4
+if [ "$(readlink $RSUSB_LIB)" != "$TARGET" ]; then sudo ln -sf $TARGET $RSUSB_LIB; fi
+DEVICE_PATH=""
+for dev in /sys/bus/usb/devices/*/; do
+    if [ "$(cat ${dev}idVendor 2>/dev/null)" = "8086" ] && \
+       [ "$(cat ${dev}idProduct 2>/dev/null)" = "0b07" ]; then
+        DEVICE_PATH="${dev}"; break
+    fi
+done
+if [ -z "$DEVICE_PATH" ]; then echo "D435 not found"; exit 0; fi
+echo "Auth-resetting D435 at $(basename $DEVICE_PATH)"
+echo 0 | sudo tee ${DEVICE_PATH}authorized > /dev/null
+sleep 3
+echo 1 | sudo tee ${DEVICE_PATH}authorized > /dev/null
+# Wait for re-enumeration (up to 10s)
+for i in $(seq 1 20); do
+    sleep 0.5; if lsusb | grep -q '8086:0b07'; then echo "Online after ${i}x0.5s"; break; fi
+done
+sleep 2; echo "Done"
+```
+
+**Confirmed result:**
+- Color: ~12 fps on Pi, ~7 fps on dev machine (USB 2.0 limit; will be ~15fps after Pi reboot restores USB 3.0)
+- Depth: ~15 fps on Pi, ~11 fps on dev machine
+- Launch sequence: `reset_realsense.sh` runs first, camera node starts 20s later (delay is in `launch_robot.launch.py`)
+
+**To view images on dev machine:**
+- `rviz2` → Add → Image → Topic: `/camera/camera/color/image_raw` (Durability: Volatile)
+- or: `ros2 topic hz /camera/camera/color/image_raw` to verify rate
+
 ### 1) Hardware plugin class fix
 File:
 `src/articubot_one/description/ros2_control.xacro`
@@ -869,13 +939,16 @@ Build a Mobile Robot with ROS
     └── Object Tracking with OpenCV                             ⬜ pending
 
 Camera hardware notes:
-- D435 detected at USB 3.2 (Bus 002 Device 002: ID 8086:0b07)
-- FW version: 5.17.0.10, Serial: 244622071235
+- D435 FW version: 5.17.0.10, Serial: 244622071235
 - Depth stream: working (640x480@15fps) ✅
 - Color stream: working (640x480@15fps) ✅ — RSUSB backend (fix #18 complete)
-- launch/camera.launch.py — wraps rs_launch.py, 640x480@15fps, no pointcloud, no align_depth
-- camera included in launch_robot.launch.py
-- NOTE: D435 may need physical replug after Pi reboot to enumerate on USB
+- IR streams: DISABLED (not needed for object tracking; reduces USB bandwidth demand)
+- QoS: VOLATILE on color + depth topics (required for cross-network DDS discovery)
+- launch/camera.launch.py — wraps rs_launch.py, 640x480@15fps, no pointcloud, no align_depth, no IR, VOLATILE QoS
+- camera included in launch_robot.launch.py (reset script runs first, 20s timer delay)
+- USB 3.0 vs USB 2.0: On USB 3.0 (normal after Pi boot) streaming works great. On USB 2.0 (can happen after session teardown) streaming still works but at reduced fps. Pi reboot restores USB 3.0.
+- After kill-9 + restart: reset_realsense.sh does authorization reset (echo 0/1 to sysfs /authorized) to clear XU endpoint stalls — no physical replug needed
+- DO NOT run uhubctl on the camera port — causes USB 3.0→2.0 fallback
 ```
 
 ### Repositories
