@@ -14,15 +14,15 @@ A ROS 2 Humble differential drive robot (Raspberry Pi 4 + Arduino Nano) with RPL
 
 **TB6612 replacement fully validated (fix #20+21+23 complete, 2026-05-03).** Both motors run in both directions, encoder signs correct, velocity tracking 88–98% at operating speeds. BNO055 IMU axes confirmed: x = forward, z = yaw. Circle test: 0.94 IMU/cmd ratio, 24.6 cm closure error (open-loop).
 
+**Full nav stack validated (2026-05-04).** Lidar scan clean, EKF stable (process noise covariance added), AMCL localizing reliably on new 0.025 m/pix map. Camera node disabled when not connected. ldconfig fix applied for liburdfdom on Pi.
+
 **ESP32 migration in progress.** Replacing Arduino Nano + Pi split with ESP32 running micro-ROS directly. ESP32 DevKitC V4 successfully flashed with `test_bno055` sketch from Windows machine (2026-04-27). BNO055 not yet wired to ESP32 — serial output not yet verified.
 
 **Next steps:**
-1. Test RPLidar with new motor/IMU setup — full stack bringup, verify scan data still clean
-2. Calibrate all sensors together for accurate positioning — EKF tuning, AMCL convergence with new velocity limits
-3. Wire BNO055 to ESP32 (SDA→GPIO21, SCL→GPIO22, 3.3V, GND) and confirm serial monitor shows sensor data
-4. Run encoder test sketch to validate ESP32 encoder ISRs
-5. Flash full micro-ROS firmware and run micro-ROS agent on Pi
-6. Object Tracking with OpenCV (final tutorial chapter)
+1. Wire BNO055 to ESP32 (SDA→GPIO21, SCL→GPIO22, 3.3V, GND) and confirm serial monitor shows sensor data
+2. Run encoder test sketch to validate ESP32 encoder ISRs
+3. Flash full micro-ROS firmware and run micro-ROS agent on Pi
+4. Object Tracking with OpenCV (final tutorial chapter)
 
 ### Which machine are you on?
 - If `hostname` returns `mybot` → you are on the **Pi**. Run commands directly.
