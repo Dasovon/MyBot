@@ -13,12 +13,13 @@ def generate_launch_description():
             os.path.join(get_package_share_directory('realsense2_camera'), 'launch', 'rs_launch.py')
         ]),
         launch_arguments={
-            'camera_namespace':         'camera',
-            'camera_name':              'camera',
-            'rgb_camera.color_profile': '640x480x15',
+            'camera_namespace':           'camera',
+            'camera_name':               'camera',
+            'rgb_camera.color_profile':  '640x480x15',
             'depth_module.depth_profile': '640x480x15',
-            'enable_pointcloud':        'false',
-            'align_depth.enable':       'false',
+            'enable_pointcloud':         'false',
+            'align_depth.enable':        'false',
+            'initial_reset':             'true',
         }.items()
     )
 
