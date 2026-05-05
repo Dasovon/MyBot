@@ -116,7 +116,7 @@ def generate_launch_description():
     )
 
     camera = TimerAction(
-        period=12.0,
+        period=20.0,
         actions=[IncludeLaunchDescription(
                 PythonLaunchDescriptionSource([os.path.join(
                     get_package_share_directory(package_name),'launch','camera.launch.py'
