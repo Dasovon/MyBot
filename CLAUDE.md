@@ -7,24 +7,26 @@ Read this first at the start of every session before doing anything else.
 ### What this project is
 A ROS 2 Humble differential drive robot (Raspberry Pi 4 + Arduino Nano) with RPLidar A1, BNO055 IMU, robot_localization EKF, Nav2 autonomous navigation, and a RealSense D435 depth camera. Based on the Articulated Robotics tutorial series.
 
-### Where we are right now (2026-05-03)
-**Nav2 is working end-to-end.** The robot navigates autonomously to goals using a saved map.
+### Where we are right now (2026-05-05)
+**Nav2 autonomous navigation confirmed working (2026-05-05).** New room map made, Nav2 goal sent programmatically → SUCCEEDED. Robot navigates autonomously to goal poses.
 
-**RealSense D435 fully integrated.** Both depth and color streams working at 15 FPS via RSUSB backend (fix #18 complete).
+**Current hardware architecture (2026-05-05):**
+- Arduino (CH340, /dev/arduino, 57600 baud): motor driver only — cmd_vel → motors + encoder odom
+- BNO055: wired directly to Pi I2C-1 (GPIO 2/3), addr 0x28 — temporary until ESP32 migration
+- RPLIDAR: /dev/rplidar (CP210x, 115200 baud)
+- ESP32: future replacement for Arduino — will take over motors/encoders + BNO055 + INA219 via micro-ROS; not started yet
 
-**TB6612 replacement fully validated (fix #20+21+23 complete, 2026-05-03).** Both motors run in both directions, encoder signs correct, velocity tracking 88–98% at operating speeds. BNO055 IMU axes confirmed: x = forward, z = yaw. Circle test: 0.94 IMU/cmd ratio, 24.6 cm closure error (open-loop).
+**All sensors confirmed healthy (2026-05-05):**
+- RPLIDAR: Express mode, 4kHz/10Hz, 12m range, Health OK
+- Arduino: responding at 57600 baud, encoders and reset commands OK
+- BNO055: chip ID verified, gyro/accel/mag all 3/3 calibrated
 
-**Full nav stack validated (2026-05-04).** Lidar scan clean, EKF stable (process noise covariance added), AMCL localizing reliably on new 0.025 m/pix map. Camera node disabled when not connected. ldconfig fix applied for liburdfdom on Pi.
-
-**ESP32 migration in progress.** Replacing Arduino Nano + Pi split with ESP32 running micro-ROS directly. ESP32 DevKitC V4 successfully flashed with `test_bno055` sketch from Windows machine (2026-04-27). BNO055 not yet wired to ESP32 — serial output not yet verified.
+**Map updated (2026-05-05).** New map saved: 232×321 @ 0.025 m/pix at `~/mybot_ws/maps/my_map` (Pi and dev). Copy lives at `~/mybot_ws/maps/` on dev machine.
 
 **Next steps:**
-1. Wire BNO055 to ESP32 (SDA→GPIO21, SCL→GPIO22, 3.3V, GND) and confirm serial monitor shows sensor data
-2. Test Nav2 autonomous navigation on Pi — send goal poses, verify robot navigates to targets
-3. Run encoder test sketch to validate ESP32 encoder ISRs
-4. Flash full micro-ROS firmware and run micro-ROS agent on Pi
-5. Object Tracking with OpenCV (final tutorial chapter)
-6. Jetson Nano setup (Docker + ROS 2 Humble + CUDA)
+1. Object Tracking with OpenCV (final tutorial chapter)
+2. ESP32 migration: replace Arduino, move BNO055 to ESP32, add INA219 via micro-ROS
+3. Jetson Nano setup (Docker + ROS 2 Humble + CUDA)
 
 ### Which machine are you on?
 - If `hostname` returns `mybot` → you are on the **Pi**. Run commands directly.
@@ -284,7 +286,8 @@ This applies even if the session ended without completing the task.
 
 ---
 
-## Current Status (2026-05-03)
+## Current Status (2026-05-05)
+- **INA219 total-system current monitoring planned (2026-05-04):** ACEIRMC INA219 breakout to be wired in-series on battery+ before power rail splits. I2C addr 0x40 (A0+A1 floating), shared bus with BNO055 on GPIO21/22. Will publish `sensor_msgs/BatteryState` on `/battery_state` via micro-ROS. Adafruit INA219 library (Arduino). Shunt resistor: 0.1Ω onboard → ±3.2A range.
 - **Windows machine set up for ESP32 development (2026-04-27):** VS Code + PlatformIO + CP2102 driver + Git installed; repo cloned to `C:\Users\Ryan\MyBot`; branch `claude/fix-chat-broken-0rKIu` checked out
 - **test_bno055 sketch flashed successfully (2026-04-27):** ESP32 DevKitC V4 (WROOM-32D, CP2102) programmed via PlatformIO; had to hold BOOT button during upload (auto-reset not reliable); serial monitor not yet checked — BNO055 not wired yet
 - **Motor driver: Adafruit TB6612 replacement fully validated (2026-05-03, fix #20+21):**
