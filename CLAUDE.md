@@ -7,7 +7,7 @@ Read this first at the start of every session before doing anything else.
 ### What this project is
 A ROS 2 Humble differential drive robot (Raspberry Pi 4 + Arduino Nano) with RPLidar A1, BNO055 IMU, robot_localization EKF, Nav2 autonomous navigation, and a RealSense D435 depth camera. Based on the Articulated Robotics tutorial series.
 
-### Where we are right now (2026-05-05)
+### Where we are right now (2026-05-07)
 **Nav2 autonomous navigation confirmed working (2026-05-05).** New room map made, Nav2 goal sent programmatically → SUCCEEDED. Robot navigates autonomously to goal poses.
 
 **RealSense D435 camera streaming confirmed working (2026-05-05).**
@@ -27,11 +27,12 @@ Color and depth images reach the dev machine. See fix #24 for the full story.
 - INA219: wired to Pi I2C-1 (GPIO 2/3), addr 0x40, shares bus with BNO055 — publishes /battery_state at 1Hz
 - ESP32: future replacement for Arduino — will take over motors/encoders + BNO055 + INA219 via micro-ROS; not started yet
 
-**All sensors confirmed healthy (2026-05-05):**
+**All sensors confirmed healthy (2026-05-07):**
 - RPLIDAR: Express mode, 4kHz/10Hz, 12m range, Health OK
 - Arduino: responding at 57600 baud, encoders and reset commands OK
 - BNO055: chip ID verified, gyro/accel/mag all 3/3 calibrated
 - RealSense D435: depth + color streaming confirmed
+- INA219: 11.38 V, +0.21 A confirmed at idle (VIN+ on battery+, VIN- on load side)
 
 **Map updated (2026-05-05).** New map saved: 232×321 @ 0.025 m/pix at `~/mybot_ws/maps/my_map` (Pi and dev). Copy lives at `~/mybot_ws/maps/` on dev machine.
 
