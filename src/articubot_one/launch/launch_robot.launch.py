@@ -130,6 +130,11 @@ def generate_launch_description():
         parameters=[os.path.join(get_package_share_directory(package_name), 'config', 'bno055_params.yaml')],
     )
 
+    ina219 = Node(
+        package=package_name,
+        executable='ina219_node.py',
+    )
+
     # NOTE: EKF (robot_localization) runs on the dev machine via dev_launch.py
     # This reduces Pi CPU load. Dev machine fuses /diff_cont/odom + /imu/imu -> /odom
 
@@ -145,4 +150,5 @@ def generate_launch_description():
         lidar,
         camera,
         imu,
+        ina219,
     ])
