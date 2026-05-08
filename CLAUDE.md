@@ -24,6 +24,7 @@ Color and depth images reach the dev machine. See fix #24 for the full story.
 - BNO055: wired directly to Pi I2C-1 (GPIO 2/3), addr 0x28 — temporary until ESP32 migration
 - RPLIDAR: /dev/rplidar (CP210x, 115200 baud)
 - RealSense D435: USB, streaming depth + color at 640x480x15fps (IR disabled)
+- INA219: wired to Pi I2C-1 (GPIO 2/3), addr 0x40, shares bus with BNO055 — publishes /battery_state at 1Hz
 - ESP32: future replacement for Arduino — will take over motors/encoders + BNO055 + INA219 via micro-ROS; not started yet
 
 **All sensors confirmed healthy (2026-05-05):**
@@ -36,7 +37,7 @@ Color and depth images reach the dev machine. See fix #24 for the full story.
 
 **Next steps:**
 1. Object Tracking with OpenCV (final tutorial chapter)
-2. ESP32 migration: replace Arduino, move BNO055 to ESP32, add INA219 via micro-ROS
+2. ESP32 migration: replace Arduino, move BNO055 + INA219 to ESP32 via micro-ROS
 3. Jetson Nano setup (Docker + ROS 2 Humble + CUDA)
 
 ### Which machine are you on?
