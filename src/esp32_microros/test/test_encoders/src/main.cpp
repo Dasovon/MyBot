@@ -1,10 +1,10 @@
 #include <Arduino.h>
 
-// Encoder pins — input-only GPIO, no pullup needed (encoder outputs are push-pull)
-#define ENC_L_A  36
-#define ENC_L_B  39
-#define ENC_R_A  34
-#define ENC_R_B  35
+// Encoder pins — ESP32-S3-DevKitC-1 (GPIO34-39 don't exist on S3)
+#define ENC_L_A  40
+#define ENC_L_B  41
+#define ENC_R_A  42
+#define ENC_R_B  43
 
 // ISR direction matches validated Arduino firmware (fix #7):
 //   left:  A == B on CHANGE → forward (+)
@@ -23,7 +23,7 @@ void setup() {
     Serial.begin(115200);
     delay(500);
     Serial.println("\n=== Encoder Test ===");
-    Serial.println("Pins: L_A=GPIO36  L_B=GPIO39  R_A=GPIO34  R_B=GPIO35");
+    Serial.println("Pins: L_A=GPIO40  L_B=GPIO41  R_A=GPIO42  R_B=GPIO43");
     Serial.println("Spin wheels FORWARD by hand — counts should go positive.");
     Serial.println("Send 'r' to reset counters.");
     Serial.println();

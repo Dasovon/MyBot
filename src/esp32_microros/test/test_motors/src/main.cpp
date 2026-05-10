@@ -1,12 +1,12 @@
 #include <Arduino.h>
 
-// TB6612 pins — Motor A = RIGHT, Motor B = LEFT
-#define PWMA  25
-#define AIN2  26
-#define AIN1  27
-#define PWMB  14
-#define BIN1  32
-#define BIN2  33
+// TB6612 pins — Motor A = RIGHT, Motor B = LEFT — ESP32-S3-DevKitC-1
+#define PWMA  1
+#define AIN1  2
+#define AIN2  4
+#define PWMB  5
+#define BIN1  6
+#define BIN2  7
 
 static void motor_set(uint8_t pwm_pin, uint8_t in1, uint8_t in2, int spd) {
     if      (spd > 0) { digitalWrite(in1, HIGH); digitalWrite(in2, LOW);  }

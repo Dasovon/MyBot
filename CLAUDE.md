@@ -171,23 +171,25 @@ Motor A (PWMA/AIN1/AIN2) = **RIGHT** | Motor B (PWMB/BIN1/BIN2) = **LEFT**
   ```
 - Serial commands: `e` (encoders) | `r` (reset) | `o <PWM1> <PWM2>` (raw) | `m <S1> <S2>` (closed-loop)
 
-### ESP32 pin mapping (`feature/esp32-microros`)
-| Function | Pin |
-|---|---|
-| PWMA (RIGHT speed) | GPIO25 |
-| AIN2 | GPIO26 |
-| AIN1 | GPIO27 |
-| BIN1 | GPIO32 |
-| BIN2 | GPIO33 |
-| PWMB (LEFT speed) | GPIO14 |
-| BNO055 SDA / INA219 SDA | GPIO8 |
-| BNO055 SCL / INA219 SCL | GPIO9 |
-| Left enc A | GPIO36 |
-| Left enc B | GPIO39 |
-| Right enc A | GPIO34 |
-| Right enc B | GPIO35 |
+### ESP32-S3 pin mapping (`feature/esp32-microros`)
+⚠️ GPIO25/26/27/32/33/34/35/36/39 do NOT exist on ESP32-S3 — those are original ESP32 only.
 
-ESP32 VCC → 3.3V (no level shifter needed for TB6612 at 3.3V logic).
+| Function | GPIO |
+|---|---|
+| PWMA (RIGHT speed) | 1 |
+| AIN1 | 2 |
+| AIN2 | 4 |
+| PWMB (LEFT speed) | 5 |
+| BIN1 | 6 |
+| BIN2 | 7 |
+| BNO055 SDA / INA219 SDA | 8 |
+| BNO055 SCL / INA219 SCL | 9 |
+| Left enc A | 40 |
+| Left enc B | 41 |
+| Right enc A | 42 |
+| Right enc B | 43 |
+
+ESP32-S3 VCC → 3.3V (no level shifter needed for TB6612 at 3.3V logic).
 
 I2C bus (GPIO8/9): BNO055 @ 0x28, INA219 @ 0x40 — both confirmed on bench.
 
