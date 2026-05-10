@@ -2,7 +2,7 @@
 #include <WiFi.h>
 #include <ArduinoOTA.h>
 #include <TelnetStream.h>
-#include <micro_ros_arduino.h>
+#include <micro_ros_platformio.h>
 #include <rcl/rcl.h>
 #include <rclc/rclc.h>
 #include <rclc/executor.h>
@@ -10,9 +10,6 @@
 #include <geometry_msgs/msg/twist.h>
 #include "credentials.h"
 
-// micro-ROS agent — Pi IP and UDP port
-#define AGENT_IP    "192.168.86.33"
-#define AGENT_PORT  8888
 
 enum State { WAITING, CONNECTED };
 static State state = WAITING;
@@ -34,8 +31,7 @@ template<typename... Args>
 static void log(const char* fmt, Args... args) {
     char buf[256];
     snprintf(buf, sizeof(buf), fmt, args...);
-    Serial.print(buf);
-    TelnetStream.print(buf);
+    TelnetStream.print(buf);  // Serial is owned by micro-ROS transport
 }
 
 static void cmd_cb(const void* msg) {
@@ -76,11 +72,9 @@ static void destroy_entities() {
 }
 
 static void wifi_setup() {
-    Serial.printf("[WiFi] Connecting to %s", WIFI_SSID);
     WiFi.mode(WIFI_STA);
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
-    Serial.printf("\n[WiFi] Connected — IP: %s\n", WiFi.localIP().toString().c_str());
+    while (WiFi.status() != WL_CONNECTED) { delay(500); }
 }
 
 static void ota_setup() {
@@ -91,7 +85,6 @@ static void ota_setup() {
     ArduinoOTA.onProgress([](unsigned int p, unsigned int t) { log("[OTA] %u%%\r", p*100/t); });
     ArduinoOTA.onError([](ota_error_t e) { log("[OTA] Error[%u]\n", e); });
     ArduinoOTA.begin();
-    Serial.println("[OTA] Ready");
 }
 
 void setup() {
@@ -101,12 +94,12 @@ void setup() {
     wifi_setup();
     ota_setup();
     TelnetStream.begin();
-    Serial.println("[Telnet] port 23 — connect: nc 192.168.86.43 23");
 
-    // WiFi UDP transport to Pi agent
-    set_microros_wifi_transports(WIFI_SSID, WIFI_PASSWORD, AGENT_IP, AGENT_PORT);
+    // USB serial transport — Serial handed to micro-ROS, use TelnetStream for logging
+    set_microros_serial_transports(Serial);
 
-    log("[microROS] Waiting for agent at %s:%d...\n", AGENT_IP, AGENT_PORT);
+    TelnetStream.println("[microROS] USB serial transport — agent cmd on Pi:");
+    TelnetStream.println("  ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyUSB0 -v4");
 }
 
 static uint32_t t_heartbeat = 0;
@@ -118,7 +111,7 @@ void loop() {
 
     switch (state) {
         case WAITING:
-            if (rmw_uros_ping_agent(100, 1) == RMW_RET_OK) {
+            if (rmw_uros_ping_agent(500, 3) == RMW_RET_OK) {
                 if (create_entities()) {
                     rmw_uros_sync_session(1000);
                     counter = 0;
@@ -130,7 +123,7 @@ void loop() {
             break;
 
         case CONNECTED:
-            rclc_executor_spin_some(&executor, RCL_MS_TO_NS(1));
+            rclc_executor_spin_some(&executor, RCL_MS_TO_NS(10));
 
             if (now - t_heartbeat >= 1000) {
                 t_heartbeat = now;
@@ -144,7 +137,7 @@ void loop() {
                 log("\n");
             }
 
-            if (rmw_uros_ping_agent(100, 1) != RMW_RET_OK) {
+            if (rmw_uros_ping_agent(500, 3) != RMW_RET_OK) {
                 destroy_entities();
                 state = WAITING;
                 log("[microROS] Agent lost — reconnecting...\n");
