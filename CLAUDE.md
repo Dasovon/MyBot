@@ -10,17 +10,18 @@ ROS 2 Humble differential drive robot. RPi 4 + Arduino Nano (production stack). 
 - RealSense D435 ✅ color + depth 640×480@15fps (RSUSB backend, fix #18)
 - INA219 battery monitor ✅ publishes `/battery_state` at 1Hz (Pi I2C, temporary)
 - BNO055 IMU ✅ Pi I2C bus 1, 0x28 (moves to ESP32 in feature branch)
-- **ESP32-S3 bench testing complete** (`feature/esp32-microros`):
+- **ESP32-S3 full firmware built and flashed** (`feature/esp32-microros`):
   - Hardware: ESP32-S3-DevKitC-1 + Lonely Binary expansion base
   - WiFi OTA working — `pio run -e esp32-s3-ota --target upload`
   - Wireless monitor: `nc esp32-mybot.local 23` (hostname `esp32-mybot.local`, IP `192.168.86.43`)
-  - BNO055 ✅ confirmed (GPIO8/9, 0x28) | INA219 ✅ confirmed (GPIO8/9, 0x40)
-  - TB6612 motors ✅ confirmed (GPIO10-15) | Encoders ✅ confirmed (GPIO39-42)
-  - micro-ROS transport ✅ confirmed — USB serial via ttyACM0, heartbeat stable at 1Hz
+  - All bench tests ✅ (BNO055, INA219, encoders, motors, micro-ROS transport)
+  - Full firmware ✅ flashed — encoders + PID + odometry + BNO055 + INA219 + micro-ROS
+  - Publishes: `/diff_cont/odom` (30Hz), `/imu/imu` (30Hz), `/battery_state` (1Hz)
+  - Subscribes: `/diff_cont/cmd_vel_unstamped`
 
 **Next steps:**
-1. Build full `src/esp32_microros/src/main.cpp` combining all sensors + motors + micro-ROS
-2. Migrate Pi stack to use ESP32 topics (replaces ros2_control + bno055 nodes)
+1. Validate full firmware on-robot: verify `/diff_cont/odom`, `/imu/imu`, `/battery_state` with agent running
+2. Migrate Pi stack to use ESP32 topics (remove ros2_control, bno055, ina219 nodes from launch_robot.launch.py)
 3. Object Tracking with OpenCV (final tutorial chapter)
 
 ---
@@ -535,3 +536,27 @@ Transport summary:
 - WiFi retained for OTA flashing and TelnetStream monitoring only
 - micro-ROS agent workspace: `~/microros_ws` (built from source — `ros-humble-micro-ros-agent` not in apt for arm64)
 - Agent command: `source ~/microros_ws/install/setup.bash && ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyACM0`
+
+### 24) Full ESP32-S3 production firmware (2026-05-10)
+Files: `src/esp32_microros/platformio.ini` and `src/esp32_microros/src/main.cpp` — complete rewrite from scaffold.
+
+`platformio.ini` changes:
+- Board: `esp32dev` → `esp32-s3-devkitc-1`
+- Library: `micro_ros_arduino` zip → `micro_ros_platformio`
+- Added: `board_microros_distro = humble`, `board_microros_transport = serial`, `ARDUINO_USB_CDC_ON_BOOT=1`
+- Added libs: `Adafruit INA219@^1.2.3`, `TelnetStream@^1.3.0`
+- Added OTA env `[env:esp32-s3-ota]`
+
+`main.cpp` — full production firmware combining all validated components:
+- WAITING/CONNECTED state machine (identical pattern to test_microros)
+- Encoders: GPIO40/41 (left), GPIO42/39 (right), INPUT_PULLUP, IRAM_ATTR ISRs
+- PID: Kp=20, Kd=12, Ki=0 (from validated Arduino firmware); targets zeroed on agent loss
+- Differential drive odometry → pub `/diff_cont/odom` at 30Hz
+- BNO055 (GPIO8/9, 0x28) → pub `/imu/imu` at 30Hz; orientation_covariance[0]=-1 (EKF ignores orientation)
+- INA219 (GPIO8/9, 0x40) → pub `/battery_state` at 1Hz; logged to TelnetStream
+- TB6612 motors GPIO10-15, legacy LEDC API (ledcSetup/ledcAttachPin/ledcWrite, ch 0/1, 1kHz 8-bit)
+- Sub `/diff_cont/cmd_vel_unstamped` → wheel rad/s targets
+- Ping keep-alive every 2s; motors stop immediately on agent loss
+- Odometry + encoder counts reset to 0 on each reconnect
+- Build: 862KB flash (27.4%), 74KB RAM (22.8%) — well within huge_app.csv limits
+- Flashed via OTA 2026-05-10 17:13
