@@ -1,7 +1,10 @@
 #include <Arduino.h>
 #include <Wire.h>
+#include <WiFi.h>
+#include <ArduinoOTA.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BNO055.h>
+#include "credentials.h"
 
 // ESP32-S3-DevKitC-1 — GPIO22 not exposed; use default I2C pins
 #define I2C_SDA 8
@@ -9,13 +12,47 @@
 
 static Adafruit_BNO055 bno(55, 0x28, &Wire);
 
+static void wifi_setup() {
+    Serial.printf("[WiFi] Connecting to %s", WIFI_SSID);
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(500);
+        Serial.print(".");
+    }
+    Serial.printf("\n[WiFi] Connected — IP: %s\n", WiFi.localIP().toString().c_str());
+}
+
+static void ota_setup() {
+    ArduinoOTA.setHostname("esp32-mybot");
+    ArduinoOTA.setPassword(OTA_PASSWORD);
+
+    ArduinoOTA.onStart([]() {
+        Serial.println("[OTA] Starting update...");
+    });
+    ArduinoOTA.onEnd([]() {
+        Serial.println("\n[OTA] Done. Rebooting.");
+    });
+    ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+        Serial.printf("[OTA] %u%%\r", progress * 100 / total);
+    });
+    ArduinoOTA.onError([](ota_error_t error) {
+        Serial.printf("[OTA] Error[%u]\n", error);
+    });
+
+    ArduinoOTA.begin();
+    Serial.println("[OTA] Ready — hostname: esp32-mybot");
+}
+
 void setup() {
     Serial.begin(115200);
     delay(500);
     Serial.println("\n=== BNO055 Test ===");
-    Serial.println("Wiring: Vin→3V3  GND→GND  SDA→GPIO8  SCL→GPIO9");
-    Serial.println("ADR unconnected = address 0x28");
 
+    wifi_setup();
+    ota_setup();
+
+    Serial.println("Wiring: Vin→3V3  GND→GND  SDA→GPIO8  SCL→GPIO9");
     Wire.begin(I2C_SDA, I2C_SCL);
 
     if (!bno.begin()) {
@@ -23,6 +60,7 @@ void setup() {
         Serial.println("     Check: 3V3 present? SDA/SCL swapped? Address conflict?");
         Serial.println("     Retrying every 2s...");
         while (true) {
+            ArduinoOTA.handle();  // keep OTA alive even during sensor retry
             delay(2000);
             if (bno.begin()) break;
             Serial.println("[!!] Still not found");
@@ -39,6 +77,8 @@ void setup() {
 }
 
 void loop() {
+    ArduinoOTA.handle();
+
     uint8_t s, g, a, m;
     bno.getCalibration(&s, &g, &a, &m);
 
