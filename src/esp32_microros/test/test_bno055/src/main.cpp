@@ -77,10 +77,15 @@ void setup() {
 
     // INA219
     if (!ina219.begin()) {
-        log("[!!] INA219 not found (0x40) — check wiring\n");
-    } else {
-        log("[OK] INA219 found (0x40)\n");
+        log("[!!] INA219 not found (0x40) — retrying every 2s...\n");
+        while (true) {
+            ArduinoOTA.handle();
+            delay(2000);
+            if (ina219.begin()) break;
+            log("[!!] INA219 still not found\n");
+        }
     }
+    log("[OK] INA219 found (0x40)\n");
 
     log("\nCalib: S=System G=Gyro A=Accel M=Mag  (0=uncal 3=fully cal)\n\n");
     log("  Voltage    Current    Power   |  Quaternion (x,y,z,w)                      Cal\n");
