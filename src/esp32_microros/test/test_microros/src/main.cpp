@@ -1,16 +1,19 @@
 #include <Arduino.h>
+#include <WiFi.h>
+#include <ArduinoOTA.h>
+#include <TelnetStream.h>
 #include <micro_ros_arduino.h>
-
 #include <rcl/rcl.h>
 #include <rclc/rclc.h>
 #include <rclc/executor.h>
 #include <std_msgs/msg/int32.h>
 #include <geometry_msgs/msg/twist.h>
+#include "credentials.h"
 
-// LED on GPIO2 (built-in on most ESP32-DevKitC — strapping pin, safe after boot)
-#define LED_PIN  2
+// micro-ROS agent — Pi IP and UDP port
+#define AGENT_IP    "192.168.86.33"
+#define AGENT_PORT  8888
 
-// Agent connection states
 enum State { WAITING, CONNECTED };
 static State state = WAITING;
 
@@ -18,15 +21,22 @@ static rcl_publisher_t    pub_heartbeat;
 static rcl_subscription_t sub_cmd;
 static std_msgs__msg__Int32      hb_msg;
 static geometry_msgs__msg__Twist cmd_msg;
-
 static rclc_executor_t executor;
 static rcl_allocator_t allocator;
 static rclc_support_t  support;
 static rcl_node_t      node;
 
-static int32_t counter = 0;
+static int32_t counter      = 0;
+static float   last_linear  = 0, last_angular = 0;
 static bool    cmd_received = false;
-static float   last_linear = 0, last_angular = 0;
+
+template<typename... Args>
+static void log(const char* fmt, Args... args) {
+    char buf[256];
+    snprintf(buf, sizeof(buf), fmt, args...);
+    Serial.print(buf);
+    TelnetStream.print(buf);
+}
 
 static void cmd_cb(const void* msg) {
     const auto* m = (const geometry_msgs__msg__Twist*)msg;
@@ -65,34 +75,56 @@ static void destroy_entities() {
     rclc_support_fini(&support);
 }
 
+static void wifi_setup() {
+    Serial.printf("[WiFi] Connecting to %s", WIFI_SSID);
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
+    Serial.printf("\n[WiFi] Connected — IP: %s\n", WiFi.localIP().toString().c_str());
+}
+
+static void ota_setup() {
+    ArduinoOTA.setHostname("esp32-mybot");
+    ArduinoOTA.setPassword(OTA_PASSWORD);
+    ArduinoOTA.onStart([]() { log("[OTA] Starting...\n"); });
+    ArduinoOTA.onEnd([]()   { log("[OTA] Done.\n"); });
+    ArduinoOTA.onProgress([](unsigned int p, unsigned int t) { log("[OTA] %u%%\r", p*100/t); });
+    ArduinoOTA.onError([](ota_error_t e) { log("[OTA] Error[%u]\n", e); });
+    ArduinoOTA.begin();
+    Serial.println("[OTA] Ready");
+}
+
 void setup() {
-    pinMode(LED_PIN, OUTPUT);
-    set_microros_transports();
-    // No Serial debug — UART0 is used by micro-ROS transport.
-    // Monitor connection via LED and Pi-side topic echo.
+    Serial.begin(115200);
+    delay(500);
+
+    wifi_setup();
+    ota_setup();
+    TelnetStream.begin();
+    Serial.println("[Telnet] port 23 — connect: nc 192.168.86.43 23");
+
+    // WiFi UDP transport to Pi agent
+    set_microros_wifi_transports(WIFI_SSID, WIFI_PASSWORD, AGENT_IP, AGENT_PORT);
+
+    log("[microROS] Waiting for agent at %s:%d...\n", AGENT_IP, AGENT_PORT);
 }
 
 static uint32_t t_heartbeat = 0;
-static uint32_t t_blink     = 0;
-static bool     led_state   = false;
 
 void loop() {
+    ArduinoOTA.handle();
+
     uint32_t now = millis();
 
     switch (state) {
         case WAITING:
-            // Fast blink (200ms) while waiting for agent
-            if (now - t_blink >= 200) {
-                t_blink   = now;
-                led_state = !led_state;
-                digitalWrite(LED_PIN, led_state);
-            }
             if (rmw_uros_ping_agent(100, 1) == RMW_RET_OK) {
                 if (create_entities()) {
                     rmw_uros_sync_session(1000);
                     counter = 0;
                     state = CONNECTED;
-                    digitalWrite(LED_PIN, HIGH);  // solid = connected
+                    log("[microROS] Connected to agent!\n");
+                    log("Monitor: ros2 topic echo /esp32/heartbeat\n");
                 }
             }
             break;
@@ -100,44 +132,23 @@ void loop() {
         case CONNECTED:
             rclc_executor_spin_some(&executor, RCL_MS_TO_NS(1));
 
-            // Heartbeat at 1 Hz
             if (now - t_heartbeat >= 1000) {
                 t_heartbeat = now;
                 hb_msg.data = ++counter;
                 rcl_publish(&pub_heartbeat, &hb_msg, NULL);
-
-                // Slow blink (1Hz) while connected to show activity
-                led_state = !led_state;
-                digitalWrite(LED_PIN, led_state);
+                log("[HB] %ld", (long)counter);
+                if (cmd_received) {
+                    log("  cmd_vel: linear=%.3f angular=%.3f", last_linear, last_angular);
+                    cmd_received = false;
+                }
+                log("\n");
             }
 
-            // Check agent is still alive
             if (rmw_uros_ping_agent(100, 1) != RMW_RET_OK) {
                 destroy_entities();
                 state = WAITING;
-                digitalWrite(LED_PIN, LOW);
+                log("[microROS] Agent lost — reconnecting...\n");
             }
             break;
     }
 }
-
-// ── How to verify on Pi ───────────────────────────────────────────
-//
-// 1. Start agent:
-//    ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyUSB0
-//
-// 2. Confirm heartbeat (should increment every second):
-//    ros2 topic echo /esp32/heartbeat
-//
-// 3. Confirm ESP32 can receive commands:
-//    ros2 topic pub --rate 2 /diff_cont/cmd_vel_unstamped \
-//      geometry_msgs/msg/Twist '{linear: {x: 0.1}, angular: {z: 0.0}}'
-//    LED blink rate unchanged (no Serial output) — check agent log for subscriber activity.
-//
-// 4. List all ESP32 topics:
-//    ros2 topic list | grep esp32
-//
-// PASS criteria:
-//   - /esp32/heartbeat visible and incrementing
-//   - No errors in micro_ros_agent output
-//   - LED: fast blink = waiting, slow blink = connected
