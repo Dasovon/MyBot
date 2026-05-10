@@ -19,5 +19,6 @@ __pycache__/
 # ESP32 WiFi credentials — never commit
 src/esp32_microros/**/credentials.h
 
-# PlatformIO build cache
+# PlatformIO build cache and VS Code intellisense db
 src/esp32_microros/**/.pio/
+src/esp32_microros/**/.vscode/

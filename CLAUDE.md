@@ -5,23 +5,74 @@
 Read this first at the start of every session before doing anything else.
 
 ### What this project is
-A ROS 2 Humble differential drive robot (Raspberry Pi 4 + Arduino Nano) with RPLidar A1, BNO055 IMU, robot_localization EKF, Nav2 autonomous navigation, and a RealSense D435 depth camera. Based on the Articulated Robotics tutorial series.
+A ROS 2 Humble differential drive robot (Raspberry Pi 4 + Arduino Nano) with RPLidar A1, BNO055 IMU, robot_localization EKF, Nav2 autonomous navigation, and a RealSense D435 depth camera. Based on the Articulated Robotics tutorial series. ESP32-S3 migration in progress to replace Arduino + Pi-side sensors.
 
-### Where we are right now (2026-04-26)
-**Nav2 is working end-to-end.** The robot navigates autonomously to goals using a saved map.
+### Where we are right now (2026-05-09)
+**Nav2 autonomous navigation confirmed working.** Robot navigates to goals using a saved map.
 
-**RealSense D435 fully integrated.** Both depth and color streams working at 15 FPS via RSUSB backend (fix #18 complete). librealsense v2.56.4 built from source with `FORCE_RSUSB_BACKEND=ON` and installed to `/opt/ros/humble/lib/aarch64-linux-gnu/librealsense2.so.2.56.4` (replacing apt build).
+**RealSense D435 camera streaming confirmed working.** Color + depth at 640x480@15fps via RSUSB backend.
 
-**TB6612 first unit damaged — awaiting replacement chip.** Firmware and wiring are correct. Before installing new chip: verify VM wire has no breadboard bridge to AIN1 or BIN1.
+**INA219 battery monitor working on Pi I2C (temporary).** Publishes `/battery_state` at 1Hz.
 
-**ESP32 + micro-ROS experiment in progress** (branch: `feature/esp32-microros`). Scaffold firmware and four component test sketches are written and ready to flash. Waiting on TB6612 replacement before running motor tests. See fix #20.
+**ESP32-S3 bench testing in progress** (branch: `feature/esp32-microros`):
+- Hardware: ESP32-S3-DevKitC-1 on Lonely Binary expansion base
+- WiFi OTA confirmed working — all future flashing is wireless (`pio run -e esp32-s3-ota --target upload`)
+- Wireless serial monitor via telnet: `nc esp32-mybot.local 23`
+- BNO055 confirmed on ESP32 I2C (GPIO8/GPIO9, addr 0x28) ✓
+- INA219 confirmed on ESP32 I2C (GPIO8/GPIO9, addr 0x40, 11.4V/~50mA) ✓
+- Motors/encoders (TB6612): not yet tested on ESP32
+- micro-ROS transport: not yet tested
+
+**ESP32 will eventually replace:**
+- Arduino Nano (motors + encoders via TB6612)
+- Pi-side BNO055 (I2C-1 GPIO2/3)
+- Pi-side INA219 (I2C-1 GPIO2/3)
+
+**Active working machine for ESP32 dev: dev machine (Linux) or Windows** — no Pi needed for bench testing.
 
 **Next steps:**
-1. Flash `test_bno055` and `test_encoders` to verify ESP32 wiring (no motor driver needed)
-2. Flash `test_microros` to validate Pi ↔ ESP32 transport
-3. Install replacement TB6612 chip, run `test_motors`
-4. If all tests pass, validate full `src/esp32_microros/src/main.cpp` firmware end-to-end
-5. Object Tracking with OpenCV (final tutorial chapter) — after ESP32 experiment resolves
+1. Wire TB6612 + encoders to ESP32, test with `test_encoders` then `test_motors`
+2. Flash `test_microros` to validate Pi ↔ ESP32 micro-ROS transport
+3. Build full `src/esp32_microros/src/main.cpp` firmware combining all sensors + motors
+4. Migrate Pi stack to use ESP32 topics instead of direct I2C + Arduino serial
+5. Object Tracking with OpenCV (final tutorial chapter)
+
+### ESP32 development — which machine
+ESP32 firmware is developed on **dev (Linux)** or **Windows** — no Pi required for bench work.
+- Flash via USB first time, then all updates go OTA over WiFi
+- Monitor: `nc esp32-mybot.local 23` (Linux/Windows with netcat) or `telnet esp32-mybot.local`
+- ESP32 hostname: `esp32-mybot.local` — IP: `192.168.86.43`
+
+### Windows ESP32 dev setup (one-time)
+1. **CH340 driver** — download from [wch-ic.com](https://www.wch-ic.com/downloads/CH341SER_EXE.html) and install. The Lonely Binary expansion base uses a CH340 chip (not CP2102).
+2. **Git for Windows** — from git-scm.com, all defaults
+3. **VS Code** — from code.visualstudio.com
+4. **PlatformIO IDE extension** — in VS Code Extensions sidebar, search "PlatformIO IDE", install
+5. **Clone repo:**
+   ```
+   git clone https://github.com/Dasovon/MyBot.git
+   cd MyBot
+   git checkout feature/esp32-microros
+   ```
+6. **Open sketch folder** in VS Code:
+   `File → Open Folder → MyBot\src\esp32_microros\test\test_bno055`
+7. **Create credentials.h** (gitignored — must create manually):
+   Create file at `src\credentials.h` with:
+   ```cpp
+   #pragma once
+   #define WIFI_SSID     "FBI-Van"
+   #define WIFI_PASSWORD "RachelRyan+2017"
+   #define OTA_PASSWORD  "esp32ota"
+   ```
+8. **First flash (USB):** PlatformIO sidebar → `esp32-s3` env → Upload
+   - If upload fails: hold BOOT button on ESP32, click Upload, release when "Connecting..." appears
+9. **All future flashes (OTA):** PlatformIO sidebar → `esp32-s3-ota` env → Upload
+   - Or from terminal: `pio run -e esp32-s3-ota --target upload`
+10. **Monitor wirelessly:** open terminal, run `nc esp32-mybot.local 23`
+    - On Windows use PuTTY (Raw mode, port 23) or install netcat via Git Bash
+
+### ⚠️ credentials.h — never commit
+The file `src/esp32_microros/**/credentials.h` is gitignored. You must create it manually on every machine you develop on. Contents are listed above in step 7.
 
 ### Which machine are you on?
 - If `hostname` returns `mybot` → you are on the **Pi**. Run commands directly.
