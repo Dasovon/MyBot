@@ -3,9 +3,9 @@
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BNO055.h>
 
-// ESP32 DevKitC V4 — hardware I2C pins
-#define I2C_SDA 21
-#define I2C_SCL 22
+// ESP32-S3-DevKitC-1 — GPIO22 not exposed; use default I2C pins
+#define I2C_SDA 8
+#define I2C_SCL 9
 
 Adafruit_BNO055 bno(55, 0x28, &Wire);
 
@@ -18,7 +18,7 @@ void setup() {
 
     if (!bno.begin()) {
         Serial.println("[!!] BNO055 not found on I2C bus");
-        Serial.println("     Check wiring: SDA->GPIO21, SCL->GPIO22, 3.3V, GND");
+        Serial.println("     Check wiring: SDA->GPIO8, SCL->GPIO9, 3.3V, GND");
         Serial.println("     Retrying every 2s...");
         while (true) {
             delay(2000);
