@@ -182,17 +182,23 @@ cmd_vel remap target:
 
 ---
 
-## Power Architecture (Current Prototype)
+## Power Architecture
 
-Battery → Motor Driver → Motors
-Battery → Buck Converter → Arduino + Encoder Logic
-Battery → Buck Converter → Raspberry Pi USB‑C
+Power distribution board: **DFR0205** (DFRobot DC-DC buck converter, 3.6–25V in, adjustable out, 5A/25W max)
 
-Ground must be common between:
-Pi
-Arduino
-Motor Driver
-Encoders
+```
+12V LiPo/Lead-acid battery
+├── DFR0205 regulated 5V ──────────→ Raspberry Pi (USB-C)
+│       └── Pi USB port ───────────→ Arduino Nano (power + serial data, one cable)
+│       └── Pi USB port ───────────→ ESP32-S3 (when in use, power + serial/OTA)
+└── DFR0205 12V passthrough ───────→ TB6612 VM (motor power only)
+
+TB6612 logic (VCC) powered separately:
+  Arduino stack: VCC → Arduino 5V pin
+  ESP32 stack:   VCC → ESP32 3V3 pin
+```
+
+Ground must be common between: Pi, Arduino/ESP32, TB6612, encoders, DFR0205.
 
 ---
 
