@@ -2,8 +2,10 @@
 #include <Wire.h>
 #include <WiFi.h>
 #include <ArduinoOTA.h>
+#include <TelnetStream.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BNO055.h>
+#include <Adafruit_INA219.h>
 #include "credentials.h"
 
 // ESP32-S3-DevKitC-1 — GPIO22 not exposed; use default I2C pins
@@ -11,6 +13,15 @@
 #define I2C_SCL 9
 
 static Adafruit_BNO055 bno(55, 0x28, &Wire);
+static Adafruit_INA219 ina219(0x40);
+
+template<typename... Args>
+static void log(const char* fmt, Args... args) {
+    char buf[256];
+    snprintf(buf, sizeof(buf), fmt, args...);
+    Serial.print(buf);
+    TelnetStream.print(buf);
+}
 
 static void wifi_setup() {
     Serial.printf("[WiFi] Connecting to %s", WIFI_SSID);
@@ -26,20 +37,14 @@ static void wifi_setup() {
 static void ota_setup() {
     ArduinoOTA.setHostname("esp32-mybot");
     ArduinoOTA.setPassword(OTA_PASSWORD);
-
-    ArduinoOTA.onStart([]() {
-        Serial.println("[OTA] Starting update...");
-    });
-    ArduinoOTA.onEnd([]() {
-        Serial.println("\n[OTA] Done. Rebooting.");
-    });
+    ArduinoOTA.onStart([]() { log("[OTA] Starting update...\n"); });
+    ArduinoOTA.onEnd([]()   { log("[OTA] Done. Rebooting.\n"); });
     ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-        Serial.printf("[OTA] %u%%\r", progress * 100 / total);
+        log("[OTA] %u%%\r", progress * 100 / total);
     });
     ArduinoOTA.onError([](ota_error_t error) {
-        Serial.printf("[OTA] Error[%u]\n", error);
+        log("[OTA] Error[%u]\n", error);
     });
-
     ArduinoOTA.begin();
     Serial.println("[OTA] Ready — hostname: esp32-mybot");
 }
@@ -47,52 +52,54 @@ static void ota_setup() {
 void setup() {
     Serial.begin(115200);
     delay(500);
-    Serial.println("\n=== BNO055 Test ===");
+    Serial.println("\n=== BNO055 + INA219 Test ===");
 
     wifi_setup();
     ota_setup();
+    TelnetStream.begin();
+    Serial.println("[Telnet] Listening on port 23 — connect: nc esp32-mybot.local 23");
 
-    Serial.println("Wiring: Vin→3V3  GND→GND  SDA→GPIO8  SCL→GPIO9");
     Wire.begin(I2C_SDA, I2C_SCL);
+    delay(100);  // let I2C bus settle before probing
 
+    // BNO055
     if (!bno.begin()) {
-        Serial.println("[!!] BNO055 not found on I2C bus");
-        Serial.println("     Check: 3V3 present? SDA/SCL swapped? Address conflict?");
-        Serial.println("     Retrying every 2s...");
+        log("[!!] BNO055 not found — check wiring. Retrying every 2s...\n");
         while (true) {
-            ArduinoOTA.handle();  // keep OTA alive even during sensor retry
+            ArduinoOTA.handle();
             delay(2000);
             if (bno.begin()) break;
-            Serial.println("[!!] Still not found");
+            log("[!!] BNO055 still not found\n");
         }
     }
-
     bno.setExtCrystalUse(true);
-    Serial.println("[OK] BNO055 found");
-    Serial.println();
-    Serial.println("Calibration: S=System G=Gyro A=Accel M=Mag  (0=uncal, 3=fully cal)");
-    Serial.println("Gyro calibrates at rest. Move sensor in figure-8 for mag.");
-    Serial.println();
-    Serial.println("         Quaternion (x,y,z,w)              Gyro (rad/s)            LinearAccel (m/s²)        Cal");
+    log("[OK] BNO055 found (0x28)\n");
+
+    // INA219
+    if (!ina219.begin()) {
+        log("[!!] INA219 not found (0x40) — check wiring\n");
+    } else {
+        log("[OK] INA219 found (0x40)\n");
+    }
+
+    log("\nCalib: S=System G=Gyro A=Accel M=Mag  (0=uncal 3=fully cal)\n\n");
+    log("  Voltage    Current    Power   |  Quaternion (x,y,z,w)                      Cal\n");
 }
 
 void loop() {
     ArduinoOTA.handle();
 
+    float voltage = ina219.getBusVoltage_V();
+    float current = ina219.getCurrent_mA() / 1000.0f;
+    float power   = ina219.getPower_mW()   / 1000.0f;
+
     uint8_t s, g, a, m;
     bno.getCalibration(&s, &g, &a, &m);
+    imu::Quaternion q = bno.getQuat();
 
-    imu::Quaternion   q  = bno.getQuat();
-    imu::Vector<3>    av = bno.getVector(Adafruit_BNO055::VECTOR_GYROSCOPE);
-    imu::Vector<3>    la = bno.getVector(Adafruit_BNO055::VECTOR_LINEARACCEL);
-
-    bool cal_ok = (g >= 1 && a >= 1);
-
-    Serial.printf("%s Q(%6.3f %6.3f %6.3f %6.3f)  G(%6.3f %6.3f %6.3f)  A(%6.3f %6.3f %6.3f)  S%dG%dA%dM%d\n",
-        cal_ok ? "[OK]" : "[~~]",
+    log("%7.3fV  %7.3fA  %6.3fW  |  Q(%6.3f %6.3f %6.3f %6.3f)  S%dG%dA%dM%d\n",
+        voltage, current, power,
         q.x(), q.y(), q.z(), q.w(),
-        av.x(), av.y(), av.z(),
-        la.x(), la.y(), la.z(),
         s, g, a, m);
 
     delay(500);
