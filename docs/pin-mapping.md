@@ -61,73 +61,101 @@ Config: `src/articubot_one/config/bno055_params.yaml`
 
 ---
 
-## Experimental Stack — ESP32-DevKitC (branch: feature/esp32-microros)
+## ESP32-S3 Stack — Lonely Binary Expansion Base (branch: feature/esp32-microros)
 
-All ESP32 GPIO are 3.3V logic. TB6612 VCC → 3V3 (no level shifter needed).
-Pins GPIO6–11 are internal flash — never use. GPIO1/3 are USB serial (micro-ROS transport).
+Hardware: ESP32-S3-DevKitC-1 mounted on Lonely Binary ESP32-S3 Expansion Base.
+All GPIO 3.3V logic. TB6612 VCC → 3V3 (no level shifter needed).
 
-### ESP32 → TB6612
+⚠️ GPIO NOT broken out on Lonely Binary board: 4, 5, 6, 7, 25, 26, 27, 32, 33, 43, 44 and most high-numbered pads.
 
-| TB6612 Pin | ESP32 GPIO | Function |
-|------------|------------|----------|
-| VCC | 3V3 | Logic supply |
-| VM | 12V motor supply | Motor power |
-| PWMA | GPIO25 | Right motor speed (PWM) |
-| AIN2 | GPIO26 | Right motor direction B |
-| AIN1 | GPIO27 | Right motor direction A |
-| BIN1 | GPIO32 | Left motor direction A |
-| BIN2 | GPIO33 | Left motor direction B |
-| PWMB | GPIO14 | Left motor speed (PWM) |
-| STBY | not wired | Onboard pullup — defaults enabled |
-| GND | GND | Common ground |
+Board pin rows:
+- Left side:  3V3, GND, 15, 16, 17, 18, 8, 3, 46, 9, 10, 11, 12, 13, 14
+- Right side: 3V3, GND, 1, 2, 42, 41, 40, 39, 38, 37, 36, 35, 0, 45, 48, 47, 21, 20, 19
 
-Note: GPIO14 is a strapping pin (JTAG TMS) but safe for PWM at runtime.
+### ESP32-S3 → TB6612 (confirmed working)
 
-### ESP32 → BNO055
+Motor A (PWMA/AIN1/AIN2) = **RIGHT** | Motor B (PWMB/BIN1/BIN2) = **LEFT**
 
-| BNO055 Pin | ESP32 GPIO | Note |
-|------------|------------|------|
-| Vin | 3V3 | Adafruit board has onboard regulator + level shifters |
-| GND | GND | |
-| SDA | GPIO21 | I2C default SDA |
-| SCL | GPIO22 | I2C default SCL |
-| ADR | not wired | → address 0x28 |
+| TB6612 Pin | ESP32-S3 GPIO | Board side | Function |
+|------------|---------------|------------|----------|
+| VCC | 3V3 | Left | Logic supply |
+| VM | 12V motor supply | — | Motor power |
+| PWMA | 10 | Left | Right motor speed (PWM, LEDC ch 0) |
+| AIN1 | 11 | Left | Right motor direction A |
+| AIN2 | 12 | Left | Right motor direction B |
+| PWMB | 13 | Left | Left motor speed (PWM, LEDC ch 1) |
+| BIN1 | 14 | Left | Left motor direction A |
+| BIN2 | 15 | Left | Left motor direction B |
+| STBY | not wired | — | Adafruit breakout pullup — defaults enabled |
+| GND | GND | Left | Common ground |
 
-### Encoder Pins (ESP32)
-
-Input-only pins used — no internal pullup/pulldown, but encoder outputs are push-pull so none needed.
-
-| Signal | ESP32 GPIO | Note |
-|--------|------------|------|
-| Left encoder A | GPIO36 (VP) | Input only, interrupt capable |
-| Left encoder B | GPIO39 (VN) | Input only |
-| Right encoder A | GPIO34 | Input only, interrupt capable |
-| Right encoder B | GPIO35 | Input only |
-
-ISR direction (matches validated Arduino firmware):
-- Left: `A == B on CHANGE` → forward (+)
-- Right: `A != B on CHANGE` → forward (+)
-
-### micro-ROS Transport
-
-USB serial (GPIO1/3, UART0) at 115200 baud.
-
-Agent command on Pi:
-```bash
-ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyUSB0
+LEDC API (ESP32-S3 Arduino framework uses legacy API):
+```cpp
+ledcSetup(ch, 1000, 8);   // channel, freq Hz, resolution bits
+ledcAttachPin(pin, ch);
+ledcWrite(ch, duty);       // 0–255
 ```
 
-Topics published by ESP32: `/diff_cont/odom`, `/imu/imu`
+### ESP32-S3 → Encoders (confirmed working)
+
+Pins pulled up with `INPUT_PULLUP`. Both interrupt on CHANGE of the A channel only.
+
+| Signal | GPIO | Board side | Note |
+|--------|------|------------|------|
+| Left enc A | 40 | Right | `attachInterrupt` on CHANGE |
+| Left enc B | 41 | Right | Read in ISR |
+| Right enc A | 42 | Right | `attachInterrupt` on CHANGE |
+| Right enc B | 39 | Right | Read in ISR |
+
+ISR direction (validated):
+- Left:  `A == B on CHANGE` → forward (+)
+- Right: `A != B on CHANGE` → forward (+)
+
+Constants: `ENC_CPR = 1010`, `wheel_radius = 0.034 m`
+
+### ESP32-S3 → BNO055 + INA219 (confirmed working)
+
+Both devices share the I2C bus on GPIO 8/9.
+
+| Device | Pin | ESP32-S3 GPIO | Board side |
+|--------|-----|---------------|------------|
+| BNO055 | Vin | 3V3 | Left |
+| BNO055 | GND | GND | Left |
+| BNO055 | SDA | 8 | Left |
+| BNO055 | SCL | 9 | Left |
+| BNO055 | ADR | not wired | — → address 0x28 |
+| INA219 | Vin | 3V3 | Left |
+| INA219 | GND | GND | Left |
+| INA219 | SDA | 8 | Left |
+| INA219 | SCL | 9 | Left |
+| INA219 | A0/A1 | not wired | — → address 0x40 |
+
+### micro-ROS Transport (confirmed working)
+
+ESP32-S3 connected to Pi via native USB port. The native USB JTAG controller (HWCDC) appears as `/dev/ttyACM0` on the Pi.
+
+Required build flag: `build_flags = -DARDUINO_USB_CDC_ON_BOOT=1`
+(The board definition already sets `ARDUINO_USB_MODE=1` for HWCDC; CDC_ON_BOOT routes `Serial` to it.)
+
+WiFi is used only for OTA flashing and TelnetStream wireless monitoring — NOT for micro-ROS.
+
+Agent setup on Pi (built from source in `~/microros_ws`):
+```bash
+source /opt/ros/humble/setup.bash
+source ~/microros_ws/install/setup.bash
+ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyACM0
+```
+
+Topics published by ESP32: `/diff_cont/odom`, `/imu/imu`, `/battery_state`
 Topic subscribed by ESP32: `/diff_cont/cmd_vel_unstamped`
 
----
+### ESP32-S3 GPIO Quick Reference — Pins to Avoid (Lonely Binary board)
 
-## ESP32 GPIO Quick Reference — Pins to Avoid
-
-| GPIO | Reason to avoid |
-|------|----------------|
-| 1, 3 | UART0 (USB serial) — used by micro-ROS transport |
-| 6–11 | Internal SPI flash — do not use |
-| 34–39 | Input only — cannot be outputs (fine for encoders) |
-| 0, 2, 5, 12, 15 | Strapping pins — state matters at boot; avoid for signals that are driven at startup |
-| 16, 17 | Used by PSRAM on WROVER modules — avoid if using WROVER |
+| GPIO | Reason |
+|------|--------|
+| 4, 5, 6, 7 | Not broken out on Lonely Binary board |
+| 25, 26, 27, 32, 33 | Not broken out on Lonely Binary board |
+| 43, 44 | UART0 TX/RX — not broken out |
+| 19, 20 | Native USB D−/D+ — leave for USB |
+| 45, 46 | Strapping pins — avoid signals driven at boot |
+| 0 | Strapping pin (boot mode) |

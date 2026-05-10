@@ -5,25 +5,23 @@
 ### What this project is
 ROS 2 Humble differential drive robot. RPi 4 + Arduino Nano (production stack). ESP32-S3 migration in progress to replace Arduino + Pi-side sensors. Based on Articulated Robotics tutorial series.
 
-### Current state (2026-05-09)
+### Current state (2026-05-10)
 - Nav2 autonomous navigation ✅ working (saved map at `~/mybot_ws/maps/my_map`)
 - RealSense D435 ✅ color + depth 640×480@15fps (RSUSB backend, fix #18)
 - INA219 battery monitor ✅ publishes `/battery_state` at 1Hz (Pi I2C, temporary)
 - BNO055 IMU ✅ Pi I2C bus 1, 0x28 (moves to ESP32 in feature branch)
-- **ESP32-S3 bench testing in progress** (`feature/esp32-microros`):
+- **ESP32-S3 bench testing complete** (`feature/esp32-microros`):
   - Hardware: ESP32-S3-DevKitC-1 + Lonely Binary expansion base
   - WiFi OTA working — `pio run -e esp32-s3-ota --target upload`
   - Wireless monitor: `nc esp32-mybot.local 23` (hostname `esp32-mybot.local`, IP `192.168.86.43`)
   - BNO055 ✅ confirmed (GPIO8/9, 0x28) | INA219 ✅ confirmed (GPIO8/9, 0x40)
-  - TB6612 motors/encoders: **not yet tested**
-  - micro-ROS transport: **not yet tested**
+  - TB6612 motors ✅ confirmed (GPIO10-15) | Encoders ✅ confirmed (GPIO39-42)
+  - micro-ROS transport ✅ confirmed — USB serial via ttyACM0, heartbeat stable at 1Hz
 
 **Next steps:**
-1. Wire TB6612 + encoders to ESP32 → run `test_encoders`, then `test_motors`
-2. Flash `test_microros` → validate Pi ↔ ESP32 transport
-3. Build full `src/esp32_microros/src/main.cpp` combining all sensors + motors
-4. Migrate Pi stack to use ESP32 topics (replaces ros2_control + bno055 nodes)
-5. Object Tracking with OpenCV (final tutorial chapter)
+1. Build full `src/esp32_microros/src/main.cpp` combining all sensors + motors + micro-ROS
+2. Migrate Pi stack to use ESP32 topics (replaces ros2_control + bno055 nodes)
+3. Object Tracking with OpenCV (final tutorial chapter)
 
 ---
 
@@ -272,8 +270,9 @@ pio run --target upload           # USB (first time)
 pio run -e esp32-s3-ota --target upload  # OTA (all future)
 nc esp32-mybot.local 23           # wireless monitor
 
-# micro-ROS agent on Pi (for ESP32 transport test)
-ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyUSB0
+# micro-ROS agent on Pi — ESP32-S3 connected via native USB (ttyACM0)
+source ~/microros_ws/install/setup.bash
+ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyACM0
 ```
 
 ### Dev workspace setup (one-time, on dev machine)
@@ -493,4 +492,46 @@ Files created:
 - `src/esp32_microros/test/test_motors/` — TB6612 test with safety checklist
 - `src/esp32_microros/test/test_microros/` — micro-ROS transport test, heartbeat publisher
 
-Status at scaffold: firmware written, not yet flashed. BNO055 + INA219 subsequently confirmed on bench (2026-05-09). Motors/encoders and micro-ROS transport not yet tested.
+Status at scaffold: firmware written, not yet flashed. BNO055 + INA219 subsequently confirmed on bench (2026-05-09). Motors/encoders confirmed 2026-05-09. micro-ROS transport confirmed 2026-05-10.
+
+### 22) ESP32-S3 board pin corrections — Lonely Binary Expansion Base (2026-05-09)
+Original ESP32 sketch used wrong board (`esp32dev`) and wrong GPIO pins (GPIO25/26/27/32/33/34/35/36/39 — not present on S3 or not broken out on Lonely Binary board). Fixed across all test sketches.
+
+Lonely Binary board layout — GPIO not broken out: 4, 5, 6, 7, 25, 26, 27, 32, 33, 34 (as output), 36 (S3 has no VP/VN), 43, 44.
+
+Final validated pin assignments:
+- TB6612: PWMA=10, AIN1=11, AIN2=12, PWMB=13, BIN1=14, BIN2=15
+- Encoders: Left A/B = 40/41, Right A/B = 42/39
+- I2C: SDA=8, SCL=9
+
+LEDC API: ESP32-S3 Arduino framework uses legacy API — `ledcSetup(ch, freq, res)` + `ledcAttachPin(pin, ch)` + channel-based `ledcWrite(ch, duty)`. New-style `ledcAttach(pin, freq, res)` not available.
+
+### 23) micro-ROS transport: micro_ros_platformio + USB HWCDC (2026-05-10)
+Problem 1: `micro_ros_arduino` humble branch has no precompiled `libmicroros.a` for `xtensa-esp32s3-elf` — only for original `esp32`, ARM Cortex-M, and Teensy targets. Linker errors: `undefined reference to rclc_executor_fini` etc.
+
+Fix: replaced `micro_ros_arduino` zip with `micro_ros_platformio` library, which cross-compiles `libmicroros.a` for the exact PlatformIO target at build time.
+
+Problem 2: `micro_ros_platformio` build script needs `~/.platformio/penv/bin/activate` but pip-installed PlatformIO doesn't create this venv.
+
+Fix: manually created fake penv:
+```bash
+mkdir -p ~/.platformio/penv/bin
+ln -sf /usr/bin/python3 ~/.platformio/penv/bin/python
+printf 'export PATH="%s/.platformio/penv/bin:$PATH"\n' "$HOME" > ~/.platformio/penv/bin/activate
+mkdir -p ~/.platformio/penv/lib/python3.10/site-packages
+printf '/usr/lib/python3/dist-packages\n/usr/local/lib/python3.10/dist-packages\n' > ~/.platformio/penv/lib/python3.10/site-packages/system.pth
+```
+
+Problem 3: ESP32-S3 with native USB connected to Pi — `Serial` (UART0) goes to CH340 chip, but only the native USB JTAG port (ttyACM0) was connected. `Serial.write()` sent data nowhere.
+
+Fix: added `build_flags = -DARDUINO_USB_CDC_ON_BOOT=1` to `platformio.ini`. The board definition already has `ARDUINO_USB_MODE=1` (HWCDC), so adding CDC_ON_BOOT routes `Serial` to the HWCDC peripheral which appears as `/dev/ttyACM0` on the Pi.
+
+Problem 4: Connection cycling — ping timeout 100ms/1 attempt caused false disconnects after publish.
+
+Fix: increased to `rmw_uros_ping_agent(500, 3)` and executor spin to 10ms.
+
+Transport summary:
+- ESP32 `Serial` → HWCDC → USB cable → Pi `/dev/ttyACM0`
+- WiFi retained for OTA flashing and TelnetStream monitoring only
+- micro-ROS agent workspace: `~/microros_ws` (built from source — `ros-humble-micro-ros-agent` not in apt for arm64)
+- Agent command: `source ~/microros_ws/install/setup.bash && ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyACM0`

@@ -38,7 +38,7 @@ Based on the [Articulated Robotics](https://articulatedrobotics.xyz/category/bui
 | Nav2 autonomous navigation | ✅ working |
 | Intel RealSense D435 (color + depth) | ✅ working — RSUSB backend |
 | INA219 battery monitor | ✅ working (Pi I2C, temporary) |
-| ESP32-S3 micro-ROS migration | 🔄 in progress — BNO055/INA219 confirmed, motors pending |
+| ESP32-S3 micro-ROS migration | 🔄 in progress — all bench tests ✅, full firmware next |
 | Object tracking (OpenCV) | ⬜ pending |
 
 ---
@@ -100,21 +100,26 @@ Arduino Nano (ros_arduino_bridge)
   └── closed-loop PID, TB6612 motor driver, quadrature encoders
 ```
 
-### ESP32 migration (branch: `feature/esp32-microros`)
+### ESP32-S3 migration (branch: `feature/esp32-microros`)
 
-The ESP32-S3 will replace both the Arduino Nano and Pi-side BNO055/INA219 I2C nodes. The Pi-side EKF, Nav2, and AMCL stack require **zero changes** — the ESP32 publishes identical topics over micro-ROS.
+The ESP32-S3 replaces both the Arduino Nano and Pi-side BNO055/INA219 I2C nodes. The Pi-side EKF, Nav2, and AMCL stack require **zero changes** — the ESP32 publishes identical topics over micro-ROS.
+
+All bench tests confirmed: BNO055 ✅, INA219 ✅, encoders ✅, motors ✅, micro-ROS transport ✅.
 
 ```
 Raspberry Pi 4
-  └── micro_ros_agent (serial, /dev/ttyUSB0)
+  └── micro_ros_agent (~/microros_ws, serial /dev/ttyACM0)
 
-        ↕ UART @ 115200
+        ↕ USB serial — native HWCDC (ARDUINO_USB_CDC_ON_BOOT=1)
 
-ESP32-S3
-  ├── encoders + PID → /diff_cont/odom
-  ├── BNO055 (I2C GPIO8/9) → /imu/imu
-  ├── INA219 (I2C GPIO8/9) → /battery_state
+ESP32-S3 (Lonely Binary expansion base, 192.168.86.43)
+  ├── encoders (GPIO40-42,39) + PID → /diff_cont/odom
+  ├── BNO055 (I2C GPIO8/9, 0x28) → /imu/imu
+  ├── INA219 (I2C GPIO8/9, 0x40) → /battery_state
+  ├── TB6612 motors (GPIO10-15)
   └── subscribes /diff_cont/cmd_vel_unstamped
+
+WiFi (192.168.86.43) → OTA flashing + TelnetStream monitor (port 23)
 ```
 
 ---
@@ -132,12 +137,12 @@ ESP32-S3
 - `ros-humble-realsense2-camera`, `ros-humble-realsense2-description`
 - librealsense v2.56.4 built from source with `-DFORCE_RSUSB_BACKEND=ON` (see [setup guide](docs/realsense-rsusb-setup.md))
 
-### ESP32 firmware
+### ESP32-S3 firmware
 
 - [PlatformIO](https://platformio.org/) (VS Code extension or CLI)
-- micro-ROS for Arduino (Humble)
-- Adafruit BNO055 library
-- Adafruit INA219 library
+- [micro_ros_platformio](https://github.com/micro-ROS/micro_ros_platformio) — builds libmicroros.a for ESP32-S3 at compile time
+- Adafruit BNO055, Adafruit INA219, TelnetStream libraries
+- micro-ROS agent on Pi: built from source in `~/microros_ws` via `micro_ros_setup`
 
 ---
 
@@ -320,16 +325,19 @@ See [`docs/pin-mapping.md`](docs/pin-mapping.md) for full tables. Key assignment
 | PWMB | D10 | LEFT speed |
 | BIN1/BIN2 | D8/D9 | LEFT direction |
 
-**ESP32-S3 (feature branch)**
+**ESP32-S3 — Lonely Binary Expansion Base (feature branch)**
 
 | Function | GPIO |
 |---|---|
-| RIGHT speed (PWMA) | 25 |
-| LEFT speed (PWMB) | 14 |
+| RIGHT speed (PWMA) | 10 |
+| RIGHT dir A/B (AIN1/AIN2) | 11 / 12 |
+| LEFT speed (PWMB) | 13 |
+| LEFT dir A/B (BIN1/BIN2) | 14 / 15 |
 | BNO055 + INA219 SDA | 8 |
 | BNO055 + INA219 SCL | 9 |
-| Left encoder A/B | 36 / 39 |
-| Right encoder A/B | 34 / 35 |
+| Left encoder A/B | 40 / 41 |
+| Right encoder A/B | 42 / 39 |
+| micro-ROS transport | native USB → Pi `/dev/ttyACM0` |
 
 ---
 

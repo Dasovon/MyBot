@@ -249,43 +249,59 @@ Hardware/
 
 ---
 
-## ESP32 + micro-ROS (Experimental — branch: feature/esp32-microros)
+## ESP32-S3 + micro-ROS (branch: feature/esp32-microros — all tests confirmed)
 
-Firmware scaffold at `src/esp32_microros/` (PlatformIO project).
-Replaces Arduino + direct Pi I2C with a single ESP32 handling motors and BNO055.
-Pi-side stack (EKF, Nav2, AMCL) requires no changes — same topics.
+Hardware: ESP32-S3-DevKitC-1 on Lonely Binary ESP32-S3 Expansion Base.
+Static IP: 192.168.86.43 | Hostname: esp32-mybot.local | OTA password: esp32ota
+Replaces Arduino Nano + Pi-side BNO055/INA219. Pi EKF/Nav2/AMCL require no changes — same topics.
 
-ESP32-DevKitC → TB6612:
+ESP32-S3 → TB6612 (Motor A = RIGHT, Motor B = LEFT):
 ```
-VCC  → 3V3   (logic threshold — must match MCU voltage)
-PWMA → GPIO25  (right motor speed)
-AIN2 → GPIO26  (right motor dir B)
-AIN1 → GPIO27  (right motor dir A)
-BIN1 → GPIO32  (left motor dir A)
-BIN2 → GPIO33  (left motor dir B)
-PWMB → GPIO14  (left motor speed)
-STBY → not wired (onboard pullup)
+VCC  → 3V3    (logic supply)
+PWMA → GPIO10  (right motor speed, LEDC ch 0)
+AIN1 → GPIO11  (right motor dir A)
+AIN2 → GPIO12  (right motor dir B)
+PWMB → GPIO13  (left motor speed, LEDC ch 1)
+BIN1 → GPIO14  (left motor dir A)
+BIN2 → GPIO15  (left motor dir B)
+STBY → not wired (Adafruit breakout onboard pullup)
 VM   → 12V motor supply
-```
-
-ESP32-DevKitC → BNO055:
-```
-SDA  → GPIO21
-SCL  → GPIO22
-Vin  → 3V3
 GND  → GND
 ```
 
-Encoders → ESP32 (input-only pins, no pullup needed):
+ESP32-S3 → BNO055 + INA219 (shared I2C bus):
 ```
-Left  A → GPIO36,  Left  B → GPIO39
-Right A → GPIO34,  Right B → GPIO35
+SDA  → GPIO8   (both devices)
+SCL  → GPIO9   (both devices)
+Vin  → 3V3
+GND  → GND
+BNO055 address: 0x28 (ADR unconnected)
+INA219 address: 0x40 (A0/A1 unconnected)
 ```
 
-To test: run micro-ROS agent on Pi instead of ros2_control/bno055 nodes:
-```bash
-ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyUSB0
+Encoders → ESP32-S3 (INPUT_PULLUP, interrupt on A channel CHANGE):
 ```
+Left  A → GPIO40,  Left  B → GPIO41
+Right A → GPIO42,  Right B → GPIO39
+```
+ISR: Left A==B → forward, Right A!=B → forward. ENC_CPR=1010, radius=0.034m.
+
+micro-ROS Transport — USB serial via native HWCDC:
+```
+ESP32-S3 native USB port → USB cable → Pi /dev/ttyACM0
+build_flags = -DARDUINO_USB_CDC_ON_BOOT=1  (routes Serial to HWCDC)
+WiFi used only for OTA and TelnetStream monitoring
+```
+
+micro-ROS agent (built from source in ~/microros_ws — not in apt for arm64):
+```bash
+source /opt/ros/humble/setup.bash
+source ~/microros_ws/install/setup.bash
+ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyACM0
+```
+
+Topics: publishes `/diff_cont/odom`, `/imu/imu`, `/battery_state`
+        subscribes `/diff_cont/cmd_vel_unstamped`
 
 ---
 
