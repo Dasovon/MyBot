@@ -5,12 +5,14 @@
 #include "credentials.h"
 
 // TB6612 pins — Motor A = RIGHT, Motor B = LEFT — Lonely Binary ESP32-S3 Expansion Base
-#define PWMA  10
-#define AIN1  11
-#define AIN2  12
-#define PWMB  13
-#define BIN1  14
-#define BIN2  15
+#define PWMA     10
+#define AIN1     11
+#define AIN2     12
+#define PWMB     13
+#define BIN1     14
+#define BIN2     15
+#define PWMA_CH  0   // LEDC channel for RIGHT motor
+#define PWMB_CH  1   // LEDC channel for LEFT motor
 
 template<typename... Args>
 static void log(const char* fmt, Args... args) {
@@ -45,41 +47,41 @@ static void ota_setup() {
     Serial.println("[OTA] Ready — hostname: esp32-mybot");
 }
 
-static void motor_set(uint8_t pwm_pin, uint8_t in1, uint8_t in2, int spd) {
+static void motor_set(uint8_t ch, uint8_t in1, uint8_t in2, int spd) {
     if      (spd > 0) { digitalWrite(in1, HIGH); digitalWrite(in2, LOW);  }
     else if (spd < 0) { digitalWrite(in1, LOW);  digitalWrite(in2, HIGH); spd = -spd; }
     else              { digitalWrite(in1, LOW);  digitalWrite(in2, LOW);  }
-    ledcWrite(pwm_pin, (uint32_t)constrain(spd, 0, 255));
+    ledcWrite(ch, (uint32_t)constrain(spd, 0, 255));
 }
 
 static void stop_all() {
-    motor_set(PWMB, BIN1, BIN2, 0);
-    motor_set(PWMA, AIN1, AIN2, 0);
+    motor_set(PWMB_CH, BIN1, BIN2, 0);
+    motor_set(PWMA_CH, AIN1, AIN2, 0);
 }
 
 static void run_sequence() {
     log("\n--- Left motor forward 2s ---\n");
-    motor_set(PWMB, BIN1, BIN2,  150); delay(2000); stop_all(); delay(500);
+    motor_set(PWMB_CH, BIN1, BIN2,  150); delay(2000); stop_all(); delay(500);
 
     log("--- Left motor reverse 2s ---\n");
-    motor_set(PWMB, BIN1, BIN2, -150); delay(2000); stop_all(); delay(500);
+    motor_set(PWMB_CH, BIN1, BIN2, -150); delay(2000); stop_all(); delay(500);
 
     log("--- Right motor forward 2s ---\n");
-    motor_set(PWMA, AIN1, AIN2,  150); delay(2000); stop_all(); delay(500);
+    motor_set(PWMA_CH, AIN1, AIN2,  150); delay(2000); stop_all(); delay(500);
 
     log("--- Right motor reverse 2s ---\n");
-    motor_set(PWMA, AIN1, AIN2, -150); delay(2000); stop_all(); delay(500);
+    motor_set(PWMA_CH, AIN1, AIN2, -150); delay(2000); stop_all(); delay(500);
 
     log("--- Both forward: PWM ramp 0→200→0 ---\n");
     for (int s = 0; s <= 200; s += 20) {
-        motor_set(PWMB, BIN1, BIN2, s);
-        motor_set(PWMA, AIN1, AIN2, s);
+        motor_set(PWMB_CH, BIN1, BIN2, s);
+        motor_set(PWMA_CH, AIN1, AIN2, s);
         log("  PWM %3d\n", s);
         delay(150);
     }
     for (int s = 200; s >= 0; s -= 20) {
-        motor_set(PWMB, BIN1, BIN2, s);
-        motor_set(PWMA, AIN1, AIN2, s);
+        motor_set(PWMB_CH, BIN1, BIN2, s);
+        motor_set(PWMA_CH, AIN1, AIN2, s);
         delay(150);
     }
     stop_all();
@@ -98,8 +100,8 @@ void setup() {
 
     pinMode(AIN1, OUTPUT); pinMode(AIN2, OUTPUT);
     pinMode(BIN1, OUTPUT); pinMode(BIN2, OUTPUT);
-    ledcAttach(PWMA, 1000, 8);
-    ledcAttach(PWMB, 1000, 8);
+    ledcSetup(PWMA_CH, 1000, 8); ledcAttachPin(PWMA, PWMA_CH);
+    ledcSetup(PWMB_CH, 1000, 8); ledcAttachPin(PWMB, PWMB_CH);
     stop_all();
 
     log("\n=== Motor Test ===\n");
@@ -122,10 +124,10 @@ void loop() {
     if (c < 0) return;
     switch ((char)c) {
         case 'g': run_sequence(); break;
-        case 'f': motor_set(PWMB, BIN1, BIN2,  150); motor_set(PWMA, AIN1, AIN2,  150); log("Both forward\n");      break;
-        case 'b': motor_set(PWMB, BIN1, BIN2, -150); motor_set(PWMA, AIN1, AIN2, -150); log("Both reverse\n");      break;
-        case 'l': motor_set(PWMB, BIN1, BIN2,  150); motor_set(PWMA, AIN1, AIN2,    0); log("Left forward only\n"); break;
-        case 'r': motor_set(PWMB, BIN1, BIN2,    0); motor_set(PWMA, AIN1, AIN2,  150); log("Right forward only\n"); break;
+        case 'f': motor_set(PWMB_CH, BIN1, BIN2,  150); motor_set(PWMA_CH, AIN1, AIN2,  150); log("Both forward\n");      break;
+        case 'b': motor_set(PWMB_CH, BIN1, BIN2, -150); motor_set(PWMA_CH, AIN1, AIN2, -150); log("Both reverse\n");      break;
+        case 'l': motor_set(PWMB_CH, BIN1, BIN2,  150); motor_set(PWMA_CH, AIN1, AIN2,    0); log("Left forward only\n"); break;
+        case 'r': motor_set(PWMB_CH, BIN1, BIN2,    0); motor_set(PWMA_CH, AIN1, AIN2,  150); log("Right forward only\n"); break;
         case 's': stop_all(); log("Stopped\n"); break;
     }
 }
