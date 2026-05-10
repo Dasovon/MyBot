@@ -171,23 +171,26 @@ Motor A (PWMA/AIN1/AIN2) = **RIGHT** | Motor B (PWMB/BIN1/BIN2) = **LEFT**
   ```
 - Serial commands: `e` (encoders) | `r` (reset) | `o <PWM1> <PWM2>` (raw) | `m <S1> <S2>` (closed-loop)
 
-### ESP32-S3 pin mapping (`feature/esp32-microros`)
-⚠️ GPIO25/26/27/32/33/34/35/36/39 do NOT exist on ESP32-S3 — those are original ESP32 only.
+### ESP32-S3 pin mapping — Lonely Binary Expansion Base (`feature/esp32-microros`)
+⚠️ GPIO4/5/6/7 and GPIO25/26/27/32/33/34/35/36/43/44 are NOT broken out on the Lonely Binary board.
 
-| Function | GPIO |
-|---|---|
-| PWMA (RIGHT speed) | 1 |
-| AIN1 | 2 |
-| AIN2 | 4 |
-| PWMB (LEFT speed) | 5 |
-| BIN1 | 6 |
-| BIN2 | 7 |
-| BNO055 SDA / INA219 SDA | 8 |
-| BNO055 SCL / INA219 SCL | 9 |
-| Left enc A | 40 |
-| Left enc B | 41 |
-| Right enc A | 42 |
-| Right enc B | 43 |
+Board left side: 3V3, GND, 15, 16, 17, 18, 8, 3, 46, 9, 10, 11, 12, 13, 14
+Board right side: 3V3, GND, 1, 2, 42, 41, 40, 39, 38, 37, 36, 35, 0, 45, 48, 47, 21, 20, 19
+
+| Function | GPIO | Board side |
+|---|---|---|
+| PWMA (RIGHT speed) | 10 | Left |
+| AIN1 | 11 | Left |
+| AIN2 | 12 | Left |
+| PWMB (LEFT speed) | 13 | Left |
+| BIN1 | 14 | Left |
+| BIN2 | 15 | Left |
+| BNO055 SDA / INA219 SDA | 8 | Left |
+| BNO055 SCL / INA219 SCL | 9 | Left |
+| Left enc A | 40 | Right |
+| Left enc B | 41 | Right |
+| Right enc A | 42 | Right |
+| Right enc B | 39 | Right |
 
 ESP32-S3 VCC → 3.3V (no level shifter needed for TB6612 at 3.3V logic).
 
