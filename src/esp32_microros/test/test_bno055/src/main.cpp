@@ -3,8 +3,9 @@
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BNO055.h>
 
-// PASS: lines starting with [OK]
-// FAIL: lines starting with [!!]
+// ESP32-S3-DevKitC-1 — GPIO22 not exposed; use default I2C pins
+#define I2C_SDA 8
+#define I2C_SCL 9
 
 static Adafruit_BNO055 bno(55, 0x28, &Wire);
 
@@ -12,10 +13,10 @@ void setup() {
     Serial.begin(115200);
     delay(500);
     Serial.println("\n=== BNO055 Test ===");
-    Serial.println("Wiring: Vin→3V3  GND→GND  SDA→GPIO21  SCL→GPIO22");
+    Serial.println("Wiring: Vin→3V3  GND→GND  SDA→GPIO8  SCL→GPIO9");
     Serial.println("ADR unconnected = address 0x28");
 
-    Wire.begin(21, 22);
+    Wire.begin(I2C_SDA, I2C_SCL);
 
     if (!bno.begin()) {
         Serial.println("[!!] BNO055 not found on I2C bus");
