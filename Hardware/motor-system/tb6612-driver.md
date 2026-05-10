@@ -1,6 +1,6 @@
 # Adafruit TB6612FNG Motor Driver
 
-![TB6612 Breakout](https://cdn-shop.adafruit.com/970x728/2448-07.jpg)
+![TB6612 Breakout](tb6612-pinout.jpg)
 
 **Role in MyBot:** Dual H-bridge motor driver. Receives PWM + direction signals from the Arduino Nano (or ESP32-S3) and drives both DC gear motors. Replaces the L298N used in earlier builds.
 
@@ -23,7 +23,7 @@
 
 ## Pinout
 
-![TB6612 Pinout](https://cdn-learn.adafruit.com/assets/assets/000/102/733/medium800/adafruit_products_TB6612_top.jpg)
+![TB6612 pinout](tb6612-pinout.jpg)
 
 ```
               Adafruit TB6612FNG Breakout

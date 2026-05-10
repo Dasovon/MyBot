@@ -1,6 +1,6 @@
 # Arduino Nano
 
-![Arduino Nano](https://content.arduino.cc/assets/Pinout-NANO_latest.png)
+![Arduino Nano pinout](arduino-nano-pinout.png)
 
 **Role in MyBot:** Motor controller. Runs `ros_arduino_bridge` firmware — receives closed-loop speed commands from `ros2_control` over serial, drives the TB6612 motor driver, and reads quadrature encoders.
 

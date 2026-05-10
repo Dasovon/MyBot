@@ -1,6 +1,6 @@
 # Slamtec RPLidar A1 M8
 
-![RPLidar A1](https://www.slamtec.com/img/picture/rplidar_a1/RPLIDAR_A1.jpg)
+![RPLidar A1 M8](rplidar-a1-photo.jpg)
 
 **Role in MyBot:** 360° 2D laser scanner. Provides `/scan` topic consumed by `slam_toolbox` for mapping and Nav2 AMCL for localization.
 

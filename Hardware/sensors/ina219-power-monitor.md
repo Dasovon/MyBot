@@ -1,6 +1,6 @@
 # Adafruit INA219 Current Sensor
 
-![INA219 Breakout](https://cdn-shop.adafruit.com/970x728/904-07.jpg)
+![INA219 DC Current Sensor](ina219-photo.png)
 
 **Role in MyBot:** High-side DC current and voltage monitor. Measures battery bus voltage and current draw, publishes `/battery_state` at 1Hz. Currently connected to Pi I2C — will move to ESP32-S3 I2C bus in the ESP32 migration.
 

@@ -1,6 +1,6 @@
 # Intel RealSense D435 Depth Camera
 
-![RealSense D435](https://www.intel.com/content/dam/www/public/us/en/images/photography/rwd/camera/realsense-depth-camera-d435-board-top-view-16x9.png.rendition.intel.web.1280.720.png)
+![Intel RealSense D435](realsense-d435-photo.png)
 
 **Role in MyBot:** RGB-D camera providing color and depth streams for future object tracking (OpenCV chapter). Streams at 640×480@15fps via the RSUSB backend.
 

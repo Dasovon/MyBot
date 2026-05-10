@@ -1,6 +1,6 @@
 # Adafruit BNO055 Absolute Orientation Sensor
 
-![BNO055 Breakout](https://cdn-shop.adafruit.com/970x728/2472-07.jpg)
+![BNO055 Breakout](bno055-pinout.jpg)
 
 **Role in MyBot:** 9-DOF IMU providing fused orientation data. Publishes `/imu/imu` (angular velocity + linear acceleration) consumed by `robot_localization` EKF for odometry fusion.
 
@@ -26,7 +26,7 @@
 
 ## Pinout
 
-![BNO055 Pinout](https://cdn-learn.adafruit.com/assets/assets/000/024/546/medium800/sensors_pinout.jpg)
+![BNO055 pinout](bno055-pinout.jpg)
 
 | Pin | Description |
 |---|---|

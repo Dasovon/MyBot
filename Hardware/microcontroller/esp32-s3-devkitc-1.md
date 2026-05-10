@@ -1,6 +1,6 @@
 # ESP32-S3-DevKitC-1
 
-![ESP32-S3-DevKitC-1](https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32s3/_images/ESP32-S3-DevKitC-1_v2-annotated-photo.png)
+![ESP32-S3-DevKitC-1 pinout](esp32-s3-pinout.jpg)
 
 **Role in MyBot:** Replacement for Arduino Nano + Pi-side BNO055/INA219 (branch: `feature/esp32-microros`). Handles motor control, quadrature encoders, IMU, and power monitoring over micro-ROS serial transport. Supports WiFi OTA firmware updates.
 
@@ -31,7 +31,7 @@
 
 ## Pinout
 
-![ESP32-S3-DevKitC-1 Pinout](https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32s3/esp32-s3-devkitc-1/_images/esp32-s3-devkitc-1-pin-layout.png)
+![ESP32-S3-DevKitC-1 pinout](esp32-s3-pinout.jpg)
 
 ### ⚠️ Important: GPIO22 is NOT exposed on the DevKitC-1
 

@@ -1,6 +1,6 @@
 # Raspberry Pi 4 Model B
 
-![Raspberry Pi 4](https://www.raspberrypi.com/app/uploads/2022/02/COLOUR-Raspberry-Pi-4-labelled-1-1536x1024.jpg)
+![Raspberry Pi 4 GPIO](raspberry-pi-4-gpio.png)
 
 **Role in MyBot:** Main compute board. Runs ROS 2 Humble, hardware drivers (rplidar, bno055, realsense2_camera, ros2_control), and receives navigation commands from the dev machine over WiFi.
 
@@ -23,7 +23,7 @@
 
 ## GPIO Pinout
 
-![Raspberry Pi 4 GPIO](https://www.raspberrypi.com/documentation/computers/images/GPIO-Pinout-Diagram-2.png)
+![Raspberry Pi 4 GPIO pinout](raspberry-pi-4-gpio.png)
 
 ### Key pins used by MyBot
 
