@@ -8,21 +8,20 @@ ROS 2 Humble differential drive robot. RPi 4 + Arduino Nano (production stack). 
 ### Current state (2026-05-10)
 - Nav2 autonomous navigation ✅ working (saved map at `~/mybot_ws/maps/my_map`)
 - RealSense D435 ✅ color + depth 640×480@15fps (RSUSB backend, fix #18)
-- INA219 battery monitor ✅ publishes `/battery_state` at 1Hz (Pi I2C, temporary)
-- BNO055 IMU ✅ Pi I2C bus 1, 0x28 (moves to ESP32 in feature branch)
-- **ESP32-S3 full firmware built and flashed** (`feature/esp32-microros`):
+- **ESP32-S3 full firmware validated and driving** (`feature/esp32-microros`):
   - Hardware: ESP32-S3-DevKitC-1 + Lonely Binary expansion base
   - WiFi OTA working — `pio run -e esp32-s3-ota --target upload`
-  - Wireless monitor: `nc esp32-mybot.local 23` (hostname `esp32-mybot.local`, IP `192.168.86.43`)
-  - All bench tests ✅ (BNO055, INA219, encoders, motors, micro-ROS transport)
-  - Full firmware ✅ flashed — encoders + PID + odometry + BNO055 + INA219 + micro-ROS
+  - Wireless monitor: `nc esp32-mybot.local 23`
   - Publishes: `/diff_cont/odom` (30Hz), `/imu/imu` (30Hz), `/battery_state` (1Hz)
   - Subscribes: `/diff_cont/cmd_vel_unstamped`
+  - **Pi launch migrated**: `launch_robot.launch.py` now runs micro_ros_agent instead of ros2_control/bno055/ina219
+  - **Teleop validated** ✅: forward, left turn, right turn, combined arc — all stable, no jolting
+  - PID: Kp=30, Ki=150, KI_MAX=1.0, Kd=0. Coasts to stop on zero target (no hard braking).
+  - Motor assignment: pid_l→PWMB (Motor B = Left), pid_r→PWMA (Motor A = Right)
 
 **Next steps:**
-1. Validate full firmware on-robot: verify `/diff_cont/odom`, `/imu/imu`, `/battery_state` with agent running
-2. Migrate Pi stack to use ESP32 topics (remove ros2_control, bno055, ina219 nodes from launch_robot.launch.py)
-3. Object Tracking with OpenCV (final tutorial chapter)
+1. Object Tracking with OpenCV (final tutorial chapter)
+2. Jetson Nano setup (Docker + ROS 2 Humble + CUDA)
 
 ---
 
@@ -317,9 +316,10 @@ Following: https://articulatedrobotics.xyz/category/build-a-mobile-robot-with-ro
 ├── Hardware (Pi, Power, Lidar)       ✅
 ├── Adding a Camera (RealSense D435)  ✅ RSUSB backend, 15fps
 ├── ros2_control (sim + real)         ✅ full validation 2026-03-13
-├── Teleoperation                     ✅
+├── Teleoperation                     ✅ (Arduino stack + ESP32 stack both validated)
 ├── SLAM with slam_toolbox            ✅ map saved 2026-03-21
 ├── Navigation with Nav2              ✅ autonomous goals working
+├── ESP32-S3 micro-ROS migration      ✅ full stack driving 2026-05-10
 └── Object Tracking with OpenCV       ⬜ pending
 ```
 
@@ -560,3 +560,32 @@ Files: `src/esp32_microros/platformio.ini` and `src/esp32_microros/src/main.cpp`
 - Odometry + encoder counts reset to 0 on each reconnect
 - Build: 862KB flash (27.4%), 74KB RAM (22.8%) — well within huge_app.csv limits
 - Flashed via OTA 2026-05-10 17:13
+
+### 25) Pi launch migrated from ros2_control to micro_ros_agent (2026-05-10)
+File: `src/articubot_one/launch/launch_robot.launch.py`
+
+Removed: `controller_manager`, `delayed_controller_manager`, `diff_drive_spawner`, `joint_broad_spawner`, bno055 node, ina219 node, `robot_description` variable, `controller_params_file`, `Command`/`RegisterEventHandler`/`OnProcessStart` imports.
+
+Added: `micro_ros_agent` Node (`ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyACM0`).
+
+Note: `micro_ros_agent` is built from source in `~/microros_ws` on Pi (not in apt for arm64). The mybot-launch alias was updated to `source ~/microros_ws/install/setup.bash` before launch.
+
+### 26) ESP32 PID tuning and motor cross-wiring fix (2026-05-10)
+Problem: violent motor jolting during turns and runaway at ±12 rad/s with zero target.
+
+Root cause: a previous debugging attempt swapped PWMA↔PWMB channel assignments in `motor_set()` calls. This created a cross-wired positive feedback loop: pid_l read the left encoder but drove the right motor; correcting one motor accelerated the other. The runaway was stable at max speed because both PIDs saturated at ±255.
+
+Fix: reverted motor assignment to original correct wiring:
+```cpp
+motor_set(PWMB_CH, BIN1, BIN2, pid_compute(pid_l, vel_l, dt));  // Left PID → Motor B (Left)
+motor_set(PWMA_CH, AIN1, AIN2, pid_compute(pid_r, vel_r, dt));  // Right PID → Motor A (Right)
+```
+
+Also changed PID gains: `Kp=100 → Kp=30` (Kp=100 caused oscillation at turn speeds with no Kd), `Ki=150` retained (overcomes deadband), `Kd=0` retained.
+
+Also added coast-to-stop: when target is near zero, PID returns 0 (motor coasts) instead of actively braking. Eliminates hard stop jerk on key release:
+```cpp
+if (fabsf(p.target) < 0.01f) { p.integral = 0.0f; p.prev_err = 0.0f; return 0; }
+```
+
+Teleop validated: forward, left/right turns, and combined arc all stable. Driven via `teleop_twist_keyboard` on dev machine.

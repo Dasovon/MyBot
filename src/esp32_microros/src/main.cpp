@@ -43,16 +43,29 @@ static constexpr float WHEEL_SEP     = 0.179f;
 static constexpr int   ENC_CPR       = 1010;
 static constexpr float COUNTS_TO_RAD = (2.0f * M_PI) / ENC_CPR;
 
-// ── PID — values from validated Arduino firmware: Kp=20, Kd=12, Ki=0 ─
-static constexpr float KP = 20.0f;
-static constexpr float KD = 12.0f;
+// ── PID — gains in rad/s error units ─────────────────────────────────
+// Kp=30: proportional gain. Kp=100 caused limit-cycle oscillation on turns
+//        (unloaded motors overshoot hard with no Kd). Kp=30 gives ≈same
+//        steady-state response with less ringing.
+// Ki=150: overcomes motor deadband at steady state — without it, low-speed
+//         commands (turns) limit-cycle as PWM drops below friction threshold.
+// Anti-windup: integral clamped to ±1.0 → max ±150 PWM contribution from Ki.
+static constexpr float KP     =  30.0f;
+static constexpr float KI     = 150.0f;
+static constexpr float KI_MAX =   1.0f;  // integral clamp (PWM contribution = KI * KI_MAX)
 
-struct PID { float target = 0.0f, prev_err = 0.0f; };
+struct PID { float target = 0.0f, prev_err = 0.0f, integral = 0.0f; };
 static PID pid_l, pid_r;
 
 static int pid_compute(PID& p, float actual, float dt) {
+    if (fabsf(p.target) < 0.01f) {
+        p.integral = 0.0f;
+        p.prev_err = 0.0f;
+        return 0;  // coast to stop — avoid hard braking jerk on key release
+    }
     float err = p.target - actual;
-    float out = KP * err + KD * (err - p.prev_err) / dt;
+    p.integral = constrain(p.integral + err * dt, -KI_MAX, KI_MAX);
+    float out = KP * err + KI * p.integral;
     p.prev_err = err;
     return (int)constrain(out, -255.0f, 255.0f);
 }
@@ -243,6 +256,7 @@ void loop() {
                     noInterrupts(); enc_l = 0; enc_r = 0; interrupts();
                     prev_l = 0; prev_r = 0;
                     pid_l.prev_err = 0.0f; pid_r.prev_err = 0.0f;
+                    pid_l.integral = 0.0f; pid_r.integral = 0.0f;
                     t_control = now; t_battery = now; t_ping = now;
                     state = CONNECTED;
                     log("[esp32_robot] connected\n");
@@ -269,8 +283,10 @@ void loop() {
                 float vel_l = (float)dl * COUNTS_TO_RAD / dt;  // rad/s
                 float vel_r = (float)dr * COUNTS_TO_RAD / dt;
 
-                motor_set(PWMB_CH, BIN1, BIN2, pid_compute(pid_l, vel_l, dt));
-                motor_set(PWMA_CH, AIN1, AIN2, pid_compute(pid_r, vel_r, dt));
+                motor_set(PWMB_CH, BIN1, BIN2, pid_compute(pid_l, vel_l, dt));  // Left PID → Motor B (Left)
+                motor_set(PWMA_CH, AIN1, AIN2, pid_compute(pid_r, vel_r, dt));  // Right PID → Motor A (Right)
+                log("[enc] tgt=%.2f/%.2f act=%.2f/%.2f\n",
+                    pid_l.target, pid_r.target, vel_l, vel_r);
 
                 float dist_l = (float)dl * COUNTS_TO_RAD * WHEEL_RADIUS;
                 float dist_r = (float)dr * COUNTS_TO_RAD * WHEEL_RADIUS;
