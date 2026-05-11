@@ -7,40 +7,31 @@ Differential drive ROS 2 robot using Raspberry Pi + Arduino motor controller + s
 
 ## System Block Diagram
 
-Dev Machine (ROS tools / teleop / RViz2 / Nav2)
+Dev Machine (ROS tools / teleop / RViz2 / Nav2 / EKF)
         ⇅ WiFi / network (ROS_DOMAIN_ID=0)
 
 Raspberry Pi (ROS 2 Humble) — 192.168.86.33
 ├── robot_state_publisher
-├── ros2_control_node → diff_drive_controller → /diff_cont/odom
+├── micro_ros_agent (serial /dev/ttyACM0) ← ESP32-S3
 ├── twist_mux
-├── rplidar_node → /scan
-├── bno055 → /imu/imu
-├── ekf_filter_node (/diff_cont/odom + /imu/imu → /odom)
-└── USB Serial → /dev/arduino → Arduino
+├── rplidar_node → /scan (/dev/rplidar)
+└── realsense2_camera_node → /camera/*
 
-Arduino Motor Controller
-├── Reads wheel encoders
-└── Drives motor driver
-
-Motor Driver (Adafruit TB6612)
-└── Left / Right DC Gear Motors (DC12V 130RPM JGA25-371, actual ratio 45:1)
-
-RPLidar A1 M8
-└── USB Serial → /dev/rplidar → rplidar_node
-
-BNO055 IMU (Adafruit breakout)
-└── I2C → /dev/i2c-1 → bno055 node → /imu/imu
+ESP32-S3-DevKitC-1 — 192.168.86.43 (WiFi OTA only)
+├── Publishes: /diff_cont/odom (30Hz), /imu/imu (30Hz), /battery_state (1Hz)
+├── Subscribes: /diff_cont/cmd_vel_unstamped
+├── GPIO10-15 → TB6612 → Left/Right DC Gear Motors (JGA25-371, 45:1)
+├── GPIO40/41 (Left enc A/B), GPIO42/39 (Right enc A/B)
+└── I2C GPIO8/9 → BNO055 (0x28) + INA219 (0x40)
 
 ---
 
 ## Serial Links
 
-### Arduino
-Device: /dev/arduino  (udev symlink → CH340, 1a86:7523, ttyUSB0)
-Baud: 57600
-Timeout (ros2_control config): 1000 ms
-Test command: python3 -m serial.tools.miniterm /dev/arduino 57600
+### ESP32-S3 (micro-ROS)
+Device: /dev/ttyACM0  (HWCDC native USB — no udev symlink needed)
+Protocol: micro-ROS serial transport
+Agent: `source ~/microros_ws/install/setup.bash && ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyACM0`
 
 ### RPLidar
 Device: /dev/rplidar  (udev symlink → CP2102, 10c4:ea60)
@@ -204,14 +195,14 @@ Ground must be common between: Pi, Arduino/ESP32, TB6612, encoders, DFR0205.
 
 ## Known Good Bringup Sequence
 
-1. Plug Arduino USB, RPLidar USB, and BNO055 I2C into Pi
-2. Verify devices: ls /dev/arduino /dev/rplidar && sudo i2cdetect -y 1
-3. Source workspace: source ~/mybot_ws/install/setup.bash
-4. Launch robot (alias handles port clearing): mybot-launch
-5. On dev machine: source ~/mybot_ws/install/setup.bash
+1. Plug ESP32-S3 USB (ttyACM0) and RPLidar USB into Pi
+2. Verify devices: ls /dev/ttyACM0 /dev/rplidar
+3. Source workspace: source ~/mybot_ws/install/setup.bash && source ~/microros_ws/install/setup.bash
+4. Launch robot: mybot-launch
+5. On dev machine: source ~/dev_ws/install/setup.bash
 
 mybot-launch alias (in ~/.bashrc on Pi):
-Runs: sudo fuser -k /dev/arduino /dev/rplidar before launching
+Runs launch_robot.launch.py which starts micro_ros_agent, twist_mux, rplidar, realsense2_camera, robot_state_publisher
 
 ---
 

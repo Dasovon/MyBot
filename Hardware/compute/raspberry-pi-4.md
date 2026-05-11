@@ -2,7 +2,7 @@
 
 ![Raspberry Pi 4 GPIO](raspberry-pi-4-gpio.png)
 
-**Role in MyBot:** Main compute board. Runs ROS 2 Humble, hardware drivers (rplidar, bno055, realsense2_camera, ros2_control), and receives navigation commands from the dev machine over WiFi.
+**Role in MyBot:** Main compute board. Runs ROS 2 Humble, hardware drivers (micro_ros_agent, rplidar, realsense2_camera), and receives navigation commands from the dev machine over WiFi.
 
 ---
 
@@ -29,44 +29,30 @@
 
 | GPIO | Pin # | Function | Connected to |
 |---|---|---|---|
-| GPIO2 (SDA1) | 3 | I2C bus 1 data | BNO055 SDA, INA219 SDA |
-| GPIO3 (SCL1) | 5 | I2C bus 1 clock | BNO055 SCL, INA219 SCL |
-| 3.3V | 1 | Logic supply | BNO055 Vin, INA219 Vin |
-| 5V | 2 | — | (not used externally) |
+| 5V | 2 | Power | (USB-C from DFR0205) |
 | GND | 6, 9, 14, 20, 25, 30, 34, 39 | Ground | Common ground |
+
+> BNO055 and INA219 are now on the ESP32-S3 I2C bus (GPIO8/9), not the Pi. Pi I2C pins are unused.
 
 ### USB port assignments
 
 | USB port | Device | Baud / Protocol |
 |---|---|---|
 | USB 3.0 | Intel RealSense D435 | USB 3.2 |
-| USB 2.0 | Arduino Nano (via CH340) | UART 57600 → `/dev/arduino` |
+| USB 2.0 | ESP32-S3 (HWCDC native USB) | micro-ROS → `/dev/ttyACM0` |
 | USB 2.0 | RPLidar A1 (via CP2102) | UART 115200 → `/dev/rplidar` |
-| USB 2.0 | ESP32-S3 (when in use) | UART 115200 → micro-ROS |
 
 ---
 
 ## udev symlinks
 
 ```
-/dev/arduino  →  ttyUSB* (CH340,  1a86:7523)
 /dev/rplidar  →  ttyUSB* (CP2102, 10c4:ea60)
 ```
 
 Rules file: `/etc/udev/rules.d/99-mybot.rules`
 
----
-
-## I2C devices on bus 1
-
-```bash
-sudo i2cdetect -y 1
-```
-
-| Address | Device |
-|---|---|
-| 0x28 | Adafruit BNO055 IMU |
-| 0x40 | Adafruit INA219 power monitor |
+> `/dev/ttyACM0` is the ESP32-S3 HWCDC device — no udev symlink needed (it always appears as `ttyACM0` when it is the only HWCDC device).
 
 ---
 
@@ -81,8 +67,11 @@ sudo i2cdetect -y 1
 ## ROS 2 setup
 
 - Workspace: `~/mybot_ws`
-- Launch: `mybot-launch` (bash alias — clears serial ports, then launches `launch_robot.launch.py`)
-- Nodes running on Pi: `robot_state_publisher`, `ros2_control_node`, `diff_cont`, `joint_broad`, `twist_mux`, `rplidar_composition`, `bno055`, `realsense2_camera_node`, `ina219_node`
+- Launch: `mybot-launch` (bash alias — launches `launch_robot.launch.py`)
+- micro-ROS agent workspace: `~/microros_ws` (built from source — not in apt for arm64)
+- Nodes running on Pi: `robot_state_publisher`, `micro_ros_agent`, `twist_mux`, `rplidar_composition`, `realsense2_camera_node`
+
+> EKF (`robot_localization`) and Nav2 run on the dev machine, not the Pi.
 
 ---
 

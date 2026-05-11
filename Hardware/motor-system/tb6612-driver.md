@@ -82,20 +82,22 @@ Motor A = **RIGHT** motor | Motor B = **LEFT** motor
 
 ---
 
-## MyBot wiring — ESP32-S3 stack
+## MyBot wiring — ESP32-S3 stack (production)
+
+Motor A (PWMA/AIN1/AIN2) = **RIGHT** | Motor B (PWMB/BIN1/BIN2) = **LEFT**
 
 | TB6612 Pin | ESP32 GPIO | Function |
 |---|---|---|
 | VM | 12V (from DFR0205 passthrough) | Motor power |
 | VCC | 3V3 | Logic supply (3.3V — no level shifter needed) |
 | GND | GND | Common ground |
-| PWMA | 25 | RIGHT motor speed (PWM) |
-| AIN2 | 26 | RIGHT motor direction B |
-| AIN1 | 27 | RIGHT motor direction A |
-| BIN1 | 32 | LEFT motor direction A |
-| BIN2 | 33 | LEFT motor direction B |
-| PWMB | 14 | LEFT motor speed (PWM) |
-| STBY | — | Leave unwired |
+| PWMA | 10 | RIGHT motor speed (PWM, LEDC ch 0) |
+| AIN1 | 11 | RIGHT motor direction A |
+| AIN2 | 12 | RIGHT motor direction B |
+| PWMB | 13 | LEFT motor speed (PWM, LEDC ch 1) |
+| BIN1 | 14 | LEFT motor direction A |
+| BIN2 | 15 | LEFT motor direction B |
+| STBY | — | Leave unwired (Adafruit breakout pullup defaults HIGH) |
 
 ---
 

@@ -2,9 +2,9 @@
 
 ![ESP32-S3-DevKitC-1 pinout](esp32-s3-pinout.jpg)
 
-**Role in MyBot:** Replacement for Arduino Nano + Pi-side BNO055/INA219 (branch: `feature/esp32-microros`). Handles motor control, quadrature encoders, IMU, and power monitoring over micro-ROS serial transport. Supports WiFi OTA firmware updates.
+**Role in MyBot:** Active production motor controller. Replaces the Arduino Nano + Pi-side BNO055/INA219. Handles motor control, quadrature encoders, IMU, and power monitoring over micro-ROS serial transport. Supports WiFi OTA firmware updates.
 
-**Expansion base:** Lonely Binary ESP32-S3 expansion board (CH340 USB-serial chip).
+**Expansion base:** Lonely Binary ESP32-S3 expansion board.
 
 ---
 
@@ -52,34 +52,42 @@ The DevKitC-1 board does not break out GPIO22 (standard ESP32 I2C SCL default). 
 
 ### TB6612 motor driver
 
+Motor A (PWMA/AIN1/AIN2) = **RIGHT** | Motor B (PWMB/BIN1/BIN2) = **LEFT**
+
 | GPIO | TB6612 | Function |
 |---|---|---|
-| 25 | PWMA | RIGHT motor speed (PWM) |
-| 26 | AIN2 | RIGHT motor direction B |
-| 27 | AIN1 | RIGHT motor direction A |
-| 32 | BIN1 | LEFT motor direction A |
-| 33 | BIN2 | LEFT motor direction B |
-| 14 | PWMB | LEFT motor speed (PWM) |
+| 10 | PWMA | RIGHT motor speed (PWM, LEDC ch 0) |
+| 11 | AIN1 | RIGHT motor direction A |
+| 12 | AIN2 | RIGHT motor direction B |
+| 13 | PWMB | LEFT motor speed (PWM, LEDC ch 1) |
+| 14 | BIN1 | LEFT motor direction A |
+| 15 | BIN2 | LEFT motor direction B |
 | 3V3 | VCC | TB6612 logic supply (3.3V — no level shifter needed) |
+
+LEDC uses the legacy Arduino ESP32 API (`ledcSetup` / `ledcAttachPin` / `ledcWrite`), channel 0 = right, channel 1 = left.
 
 ### Quadrature encoders
 
+All encoder pins set `INPUT_PULLUP`. Interrupts fire on CHANGE of the A channel only.
+
 | GPIO | Signal | Note |
 |---|---|---|
-| 36 | Left encoder A | Input only, interrupt capable |
-| 39 | Left encoder B | Input only |
-| 34 | Right encoder A | Input only, interrupt capable |
-| 35 | Right encoder B | Input only |
+| 40 | Left encoder A | `attachInterrupt` on CHANGE |
+| 41 | Left encoder B | Read in ISR |
+| 42 | Right encoder A | `attachInterrupt` on CHANGE |
+| 39 | Right encoder B | Read in ISR |
 
-> Input-only pins (34–39) cannot drive output but are fine for encoder reading. Encoder outputs are push-pull — no pull resistors needed.
+ISR direction: Left `A == B on CHANGE` → forward (+) | Right `A != B on CHANGE` → forward (+)
+
+Constants: `ENC_CPR = 1010`, `wheel_radius = 0.034 m`, `wheel_separation = 0.179 m`
 
 ### micro-ROS serial transport
 
-| GPIO | Function |
-|---|---|
-| 43 (TX) / 44 (RX) | UART0 — USB serial to Pi (micro-ROS) |
+ESP32-S3 native USB port (HWCDC) → USB cable → Pi `/dev/ttyACM0`.
 
-Connected via USB cable to Pi → `/dev/ttyUSB0`. Baud: 115200.
+Required build flag: `-DARDUINO_USB_CDC_ON_BOOT=1` (routes `Serial` to the native HWCDC controller on GPIO19/20).
+
+WiFi is used **only** for OTA flashing and TelnetStream wireless monitoring — not for micro-ROS.
 
 ---
 
@@ -87,11 +95,13 @@ Connected via USB cable to Pi → `/dev/ttyUSB0`. Baud: 115200.
 
 | GPIO | Reason |
 |---|---|
-| 19, 20 | USB-OTG (used for programming on some configurations) |
+| 19, 20 | Native USB D−/D+ — HWCDC micro-ROS transport; leave for USB |
 | 35, 36, 37 | Internal SPI flash/PSRAM — **do not use** on WROOM-1 modules |
-| 43, 44 | UART0 (TX/RX) — used by micro-ROS transport |
+| 43, 44 | UART0 TX/RX — not broken out on Lonely Binary board |
 | 0, 45, 46 | Strapping pins — state matters at boot |
 | 38 | RGB LED (v1.1 board) |
+| 4, 5, 6, 7 | Not broken out on Lonely Binary board |
+| 25, 26, 27, 32, 33 | Not broken out on Lonely Binary board |
 
 ---
 
@@ -150,8 +160,8 @@ Required by every test sketch. Place at `src/esp32_microros/test/<sketch>/src/cr
 
 | Topic | Type | Rate |
 |---|---|---|
-| `/diff_cont/odom` | `nav_msgs/Odometry` | ~20 Hz |
-| `/imu/imu` | `sensor_msgs/Imu` | ~20 Hz |
+| `/diff_cont/odom` | `nav_msgs/Odometry` | 30 Hz |
+| `/imu/imu` | `sensor_msgs/Imu` | 30 Hz |
 | `/battery_state` | `sensor_msgs/BatteryState` | 1 Hz |
 
 Subscribed: `/diff_cont/cmd_vel_unstamped` (`geometry_msgs/Twist`)
@@ -160,8 +170,12 @@ Subscribed: `/diff_cont/cmd_vel_unstamped` (`geometry_msgs/Twist`)
 
 ## micro-ROS agent (on Pi)
 
+Built from source in `~/microros_ws` (`ros-humble-micro-ros-agent` not available in apt for arm64).
+
 ```bash
-ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyUSB0
+source /opt/ros/humble/setup.bash
+source ~/microros_ws/install/setup.bash
+ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyACM0
 ```
 
 ---
