@@ -38,7 +38,7 @@ install(
 )
 
 install(
-  PROGRAMS scripts/ina219_node.py
+  PROGRAMS scripts/ina219_node.py scripts/oled_display_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
