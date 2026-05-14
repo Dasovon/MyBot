@@ -100,14 +100,11 @@ class OledDisplayNode(Node):
             self._cmd(0xDA); self._cmd(0x12)
             self._cmd(0xDB); self._cmd(0x40)
             time.sleep(0.1)
-            self._cmd(0xAF)
+            self._cmd(0xAF)   # Display ON
+            self._cmd(0xA5)   # Entire display ON (all pixels lit via command — bypasses GDDRAM)
+            time.sleep(0.5)   # hold so result is visible at boot
 
             self._font = ImageFont.truetype(FONT_PATH, FONT_SIZE)
-            # Boot diagnostic fill — confirms SPI data writes work at init time
-            for page in range(8):
-                self._cmd(0xB0 + page); self._cmd(0x00); self._cmd(0x10)
-                GPIO.output(DC_PIN, GPIO.HIGH)
-                self._spi.writebytes([0xFF] * WIDTH)
             self.get_logger().info('Display init OK')
         except Exception as e:
             self.get_logger().warn(f'Display init failed: {e}')
