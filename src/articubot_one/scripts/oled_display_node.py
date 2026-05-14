@@ -186,11 +186,11 @@ class OledDisplayNode(Node):
         draw = ImageDraw.Draw(img)
         f = self._font
 
-        draw.text((0,  0), f'MyBot  {ip}', font=f, fill=0)
-        draw.text((0, 13), f'BAT {bat}', font=f, fill=0)
-        draw.text((0, 26), f'VEL {vel}', font=f, fill=0)
-        draw.text((0, 39), f'POS {pos}', font=f, fill=0)
-        draw.text((0, 52), self._status_line(), font=f, fill=0)
+        draw.text((4,  0), f'MyBot  {ip}', font=f, fill=0)
+        draw.text((4, 13), f'BAT {bat}', font=f, fill=0)
+        draw.text((4, 26), f'VEL {vel}', font=f, fill=0)
+        draw.text((4, 39), f'POS {pos}', font=f, fill=0)
+        draw.text((4, 52), self._status_line(), font=f, fill=0)
 
         try:
             self._show(img)
