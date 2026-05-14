@@ -15,7 +15,9 @@ Raspberry Pi (ROS 2 Humble) — 192.168.86.33
 ├── micro_ros_agent (serial /dev/ttyACM0) ← ESP32-S3
 ├── twist_mux
 ├── rplidar_node → /scan (/dev/rplidar)
-└── realsense2_camera_node → /camera/*
+├── realsense2_camera_node → /camera/*
+└── oled_display_node (systemd: oled-display.service, starts at boot)
+    → SPI0: MOSI=GPIO10, SCLK=GPIO11, CE0=GPIO8, DC=GPIO25, RST=GPIO27
 
 ESP32-S3-DevKitC-1 — 192.168.86.43 (WiFi OTA only)
 ├── Publishes: /diff_cont/odom (30Hz), /imu/imu (30Hz), /battery_state (1Hz)
@@ -44,36 +46,26 @@ User must be in: dialout group
 
 ---
 
-## I2C — BNO055 IMU
+## BNO055 IMU
 
-Device: /dev/i2c-1 (I2C bus 1 — GPIO2=SDA pin3, GPIO3=SCL pin5)
-Address: 0x28 (default, ADR pin unconnected)
-Confirmed: sudo i2cdetect -y 1 shows 0x28
+**Now on ESP32-S3 I2C (GPIO8/9) — NOT Pi I2C.**
+The Pi-side bno055 ROS node has been removed; the ESP32 firmware reads the BNO055 directly
+and publishes `/imu/imu` at 30Hz via micro-ROS (identical topic, EKF unchanged).
 
-Wiring (BNO055 → Raspberry Pi):
-VIN  → 3.3V (pin 1)
-GND  → GND  (pin 6)
-SDA  → GPIO2 / SDA (pin 3)
-SCL  → GPIO3 / SCL (pin 5)
-RST, INT, ADR, PS0, PS1 → unconnected
+Address: 0x28 (ADR unconnected)
+Wiring: SDA → GPIO8, SCL → GPIO9, Vin → 3.3V, GND → GND (shared I2C bus with INA219)
 
-Physical mount position (base_link frame):
-xyz = "0.004 -0.018 0.055"
-(80mm from front edge, 50mm from right edge, upper deck)
+Physical mount position in base_link frame:
+xyz = "0.004 -0.018 0.055" (80mm from front edge, 50mm from right edge, upper deck)
 
-ROS config: config/bno055_params.yaml
-- connection_type: i2c
-- i2c_bus: 1
-- i2c_addr: 0x28
-- topic prefix: imu/
-- frame_id: imu_link
-- operation_mode: 0x0C (NDOF — full sensor fusion)
-
-Axis validation (2026-05-03):
-- IMU x-axis = robot forward (acceleration positive on x when driving forward)
+Axis validation (2026-05-03, when on Pi I2C — same physical mount, ESP32 reads same sensor):
+- IMU x-axis = robot forward (accel positive on x when driving forward)
 - IMU z-axis = robot yaw (gyro z negative for clockwise rotation)
-- placement_axis_remap: P1 (confirmed correct, no changes needed)
-- Circle test: gyro z = -0.494 rad/s at -0.525 rad/s commanded → IMU/cmd ratio 0.94
+- placement_axis_remap: P1 (confirmed correct)
+- Circle test: gyro z = -0.494 rad/s at -0.525 rad/s commanded
+
+ESP32 firmware config: orientation_covariance[0]=-1 so EKF ignores orientation (magnetometer
+unreliable on metal chassis); angular velocity + linear accel enabled.
 
 ---
 
@@ -207,16 +199,16 @@ Power distribution board: **DFR0205** (DFRobot DC-DC buck converter, 3.6–25V i
 ```
 12V LiPo/Lead-acid battery
 ├── DFR0205 regulated 5V ──────────→ Raspberry Pi (USB-C)
-│       └── Pi USB port ───────────→ Arduino Nano (power + serial data, one cable)
-│       └── Pi USB port ───────────→ ESP32-S3 (when in use, power + serial/OTA)
+│       ├── Pi USB port ───────────→ ESP32-S3 (power + serial/OTA, /dev/ttyACM0)
+│       ├── Pi USB port ───────────→ RPLidar A1 (power + serial, /dev/rplidar)
+│       ├── Pi USB 3.0 ────────────→ RealSense D435 (power + USB 3)
+│       └── Pi 3.3V (GPIO) ────────→ Waveshare OLED (~20mA, SPI0)
 └── DFR0205 12V passthrough ───────→ TB6612 VM (motor power only)
 
-TB6612 logic (VCC) powered separately:
-  Arduino stack: VCC → Arduino 5V pin
-  ESP32 stack:   VCC → ESP32 3V3 pin
+TB6612 logic VCC → ESP32 3V3 pin
 ```
 
-Ground must be common between: Pi, Arduino/ESP32, TB6612, encoders, DFR0205.
+Ground must be common between: Pi, ESP32-S3, TB6612, encoders, DFR0205.
 
 ---
 
@@ -320,6 +312,49 @@ ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyACM0
 
 Topics: publishes `/diff_cont/odom`, `/imu/imu`, `/battery_state`
         subscribes `/diff_cont/cmd_vel_unstamped`
+
+---
+
+## Waveshare 2.42" OLED Display
+
+**Hardware:** 128×64 white OLED, SSD1309 controller, SPI 4-wire mode (factory default).
+**Mount:** Pi SPI0 bus (completely free — not shared with any other device).
+
+Wiring (Pi BCM → Pi board pin):
+```
+VCC  → 3.3V      (pin 1)
+GND  → GND       (pin 6)
+DIN  → GPIO10    (pin 19, SPI0_MOSI)
+CLK  → GPIO11    (pin 23, SPI0_SCLK)
+CS   → GPIO8     (pin 24, SPI0_CE0)
+DC   → GPIO25    (pin 22, RIGHT column row 11)
+RST  → GPIO27    (pin 13)
+```
+
+⚠️ **DC pin 22 is the RIGHT column of row 11.** The left column of the same row is GPIO9/MISO (pin 21). Wrong pin = silent failure: no error, display stays dark.
+
+**Driver:** spidev + RPi.GPIO directly. **Do NOT use luma.oled** — its `ssd1309` class is an empty alias for `ssd1306` and sends the SSD1306 charge pump command `0x8D 0x14` (undefined on SSD1309), which corrupts initialization silently.
+
+SPI mode 3 (`sp.mode = 0b11`, CPOL=1, CPHA=1) required by Waveshare module.
+
+**Node:** `oled_display_node.py`
+- Subscribes: `/battery_state`, `/diff_cont/odom`, `/odom`, `/navigate_to_pose/_action/status`
+- Renders at 2Hz: IP address, battery V/A, velocity m/s + r/s, EKF pose x/y/yaw, nav status
+- IP via UDP socket trick (not `gethostbyname` — returns 127.0.1.1 on Ubuntu 22.04)
+- Status line: AGENT OFFLINE / TELEOP / IDLE / NAVIGATING / GOAL REACHED
+
+**Systemd service:** `/etc/systemd/system/oled-display.service` (Pi only, not in git)
+- Starts at boot via `WantedBy=multi-user.target`, before robot launch
+- `Restart=always RestartSec=5`
+- NOT in `launch_robot.launch.py` — systemd service handles it independently
+
+```bash
+sudo systemctl status oled-display
+sudo systemctl restart oled-display
+journalctl -u oled-display -f
+```
+
+**SPI interface verification:** `ls /dev/spidev*` → should show `/dev/spidev0.0`. Enable once via `sudo raspi-config → Interface Options → SPI → Enable`.
 
 ---
 

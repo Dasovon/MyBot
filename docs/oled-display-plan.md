@@ -1,30 +1,30 @@
-# OLED Display Integration Plan
+# OLED Display — Implementation Notes
 
 **Hardware:** Waveshare 2.42inch OLED, 128×64, SSD1309 controller  
-**Reference:** `Hardware/display/oled-2.42inch.md`
+**Reference:** `Hardware/display/oled-2.42inch.md`  
+**Status:** Complete and running as `oled-display.service`
 
 ---
 
-## Recommendation: Run on the Pi, SPI mode
+## Design Decisions
 
 **Why Pi, not ESP32:**
 
 | Factor | Pi | ESP32 |
 |---|---|---|
 | Data richness | Full ROS graph: Nav2 status, EKF pose, battery, velocity | Only local sensor data; no Nav2 awareness |
-| Implementation risk | Separate Python node — a crash can't affect motors | Adding display management to the real-time PID/micro-ROS loop adds complexity and timing risk |
-| Library support | `luma.oled` has native SSD1309 SPI support; Pillow for layout | u8g2 works but embedded C layout code is significantly more work |
-| Serial port | Serial free for normal use | Serial is owned by micro-ROS transport; debug output is TelnetStream only |
-| Bus availability | SPI0 bus is completely free | I2C bus already used by BNO055 + INA219 |
+| Implementation risk | Separate Python node — a crash can't affect motors | Adding display to the real-time PID/micro-ROS loop adds timing risk |
+| Bus availability | SPI0 completely free | I2C bus already used by BNO055 + INA219 |
 
-**Why SPI, not I2C (on Pi):**  
-The module ships in SPI mode — no resistor swap needed. SPI is faster and more reliable than I2C; at 2 Hz refresh rate the speed difference is irrelevant, but avoiding the PCB modification is a clear win.
+**Why spidev + RPi.GPIO directly (not luma.oled):**  
+`luma.oled`'s `ssd1309` class is an empty alias for `ssd1306`. It sends the SSD1306 charge pump command (`0x8D 0x14`) which is undefined on the SSD1309 and corrupts initialization. The display initialises silently, sends data without error, but shows nothing.
+
+**Why systemd service (not in launch_robot.launch.py):**  
+The display starts at boot showing connection status before the robot launch runs. If it were in the launch file, the display would be dark until the operator manually launches the stack.
 
 ---
 
-## Wiring Summary
-
-Module ships in SPI mode — use it as-is, no resistor swap needed.
+## Wiring
 
 ```
 Waveshare 2.42" OLED          Wire     Raspberry Pi (BCM → Board)
@@ -34,136 +34,101 @@ GND  ──────────────────────→  Blac
 DIN  ──────────────────────→  Blue  →  GPIO10 SPI0_MOSI  (pin 19)
 CLK  ──────────────────────→  Yellow→  GPIO11 SPI0_SCLK  (pin 23)
 CS   ──────────────────────→  Orange→  GPIO8  SPI0_CE0   (pin 24)
-DC   ──────────────────────→  Green →  GPIO25            (pin 22)
+DC   ──────────────────────→  Green →  GPIO25            (pin 22, RIGHT column)
 RST  ──────────────────────→  White →  GPIO27            (pin 13)
 ```
 
-Confirm after wiring: `ls /dev/spidev*` should show `/dev/spidev0.0`.
+> **Note:** GPIO25 (DC) is pin 22, which is on the **right** column of the header, row 11. GPIO9/MISO is the left column of the same row — don't confuse them.
+
+Enable SPI (one-time): `sudo raspi-config` → Interface Options → SPI → Enable
 
 ---
 
-## What to Display
-
-128×64 pixels fits 5–6 lines of small text (8px font) or 3–4 lines of readable text (12px font). Suggested layout:
+## Display Layout
 
 ```
 ┌────────────────────────────────┐
-│ MyBot          192.168.86.33   │  ← hostname / IP (static)
-│ BAT  11.4V   0.12A             │  ← /battery_state  (1 Hz)
-│ VEL  0.24m/s  0.0rad/s         │  ← /diff_cont/odom (sampled 2 Hz)
-│ POS  x=1.23  y=0.87  θ=45°    │  ← /odom EKF filtered
-│ ● NAVIGATING                   │  ← Nav2 action state or IDLE
+│ MyBot          192.168.86.33   │  ← IP via UDP socket trick (not gethostbyname)
+│ BAT  11.4V   0.12A             │  ← /battery_state
+│ VEL  0.24m/s  0.0r/s           │  ← /diff_cont/odom
+│ POS  x=1.23  y=0.87  45d       │  ← /odom (EKF filtered)
+│ AGENT OFFLINE                  │  ← nav/connection status
 └────────────────────────────────┘
 ```
 
-States for the bottom status line:
+Status line states:
 
 | State | Display |
 |---|---|
-| Agent not connected | `✗ AGENT OFFLINE` |
-| Connected, no goal | `● IDLE` |
-| Actively navigating | `● NAVIGATING` |
-| Goal reached | `✓ GOAL REACHED` |
-| Nav2 not running | `● TELEOP` |
+| No odom data for >3s | `AGENT OFFLINE` |
+| Connected, Nav2 not running | `TELEOP` |
+| Connected, no goal | `IDLE` |
+| Actively navigating | `NAVIGATING` |
+| Goal reached | `GOAL REACHED` |
 
 ---
 
-## Implementation Steps
-
-### 1. Physical
-
-- Wire to Pi SPI0 header per the wiring diagram above (no resistor swap — module ships in SPI mode)
-- Enable SPI: `sudo raspi-config` → Interface Options → SPI → Enable → reboot
-- Verify: `ls /dev/spidev*` should show `/dev/spidev0.0`
-
-### 2. Install library on Pi
+## Software Install
 
 ```bash
-sudo apt-get install -y python3-gpiozero   # pulls in lgpio — required on Ubuntu 22.04
-sudo pip3 install luma.oled pillow
+sudo pip3 install spidev pillow
+# RPi.GPIO ships with Ubuntu 22.04 (python3-rpi.gpio)
 ```
-
-`python3-gpiozero` / `lgpio` is required on Ubuntu 22.04 (Jammy). RPi.GPIO does not work reliably on this distro; without lgpio, luma.oled initialises silently but no pixels appear on the display.
-
-Verify with a one-shot test before writing the ROS node:
-```python
-from luma.core.interface.serial import spi
-from luma.oled.device import ssd1309
-from luma.core.render import canvas
-serial = spi(device=0, port=0, gpio_DC=25, gpio_RST=27)
-device = ssd1309(serial)
-with canvas(device) as draw:
-    draw.text((0, 0), "MyBot online", fill="white")
-```
-
-### 3. Write `oled_display_node.py`
-
-Location: `src/articubot_one/scripts/oled_display_node.py`
-
-The node should:
-- Subscribe to `/battery_state` (`sensor_msgs/BatteryState`) at 1 Hz
-- Subscribe to `/diff_cont/odom` (`nav_msgs/Odometry`) — sample at display rate
-- Subscribe to `/odom` (`nav_msgs/Odometry`) for EKF pose (x, y, θ)
-- Optionally subscribe to a Nav2 action feedback topic for goal state
-- Use a `create_timer(0.5, render_callback)` to refresh the display at 2 Hz — no need to re-render on every message
-- Render with Pillow `ImageDraw` onto a 128×64 `Image`, then push to luma.oled device
-- Handle display init failure gracefully (log warn, don't crash the node)
-
-Key imports:
-```python
-from luma.core.interface.serial import spi
-from luma.oled.device import ssd1309
-from PIL import Image, ImageDraw, ImageFont
-```
-
-### 4. Register in CMakeLists.txt
-
-```cmake
-install(
-  PROGRAMS scripts/oled_display_node.py
-  DESTINATION lib/${PROJECT_NAME}
-)
-```
-
-This is already the pattern used for `ina219_node.py`.
-
-### 5. Add to `launch_robot.launch.py`
-
-```python
-oled = Node(
-    package=package_name,
-    executable='oled_display_node.py',
-)
-```
-
-Add `oled` to the `LaunchDescription` return list. The node should start silently and show a "starting..." splash until topics arrive.
 
 ---
 
-## Font note
+## Pixel Rendering Convention
 
-The default PIL bitmap font is very small. For readable text on 128×64 load a TTF:
-```python
-font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 11)
+The SSD1309 uses page-based addressing. The `_show()` method in `oled_display_node.py` mirrors the Waveshare driver:
+
+- PIL image uses **white background** (`Image.new('1', ..., 1)`) and **black text** (`fill=0`)
+- Black pixels (0) in PIL → bit set → inverted → `0xFF` sent → **pixels lit on display**
+- White pixels (1) in PIL → bit clear → inverted → `0x00` sent → pixels off
+
+This means the display shows dark background with lit text.
+
+---
+
+## Systemd Service
+
+File: `/etc/systemd/system/oled-display.service`
+
+```ini
+[Unit]
+Description=MyBot OLED Display Node
+After=network.target
+
+[Service]
+Type=simple
+User=ryan
+ExecStart=/bin/bash -c 'source /opt/ros/humble/setup.bash && source /home/ryan/mybot_ws/install/setup.bash && ros2 run articubot_one oled_display_node.py'
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
 ```
-`dejavu-fonts-ttf` is available on Raspberry Pi OS by default (`sudo apt install fonts-dejavu-core` if missing).
+
+```bash
+# Service commands
+sudo systemctl status oled-display
+sudo systemctl restart oled-display
+journalctl -u oled-display -f
+```
 
 ---
 
-## What changes in the repo
+## Known Issues / Lessons Learned
 
-| File | Change |
-|---|---|
-| `src/articubot_one/scripts/oled_display_node.py` | new — ROS 2 display node |
-| `src/articubot_one/CMakeLists.txt` | add install for new script |
-| `src/articubot_one/launch/launch_robot.launch.py` | add `oled` node |
-| `Hardware/display/oled-2.42inch.md` | new — hardware reference |
-| `docs/oled-display-plan.md` | this file |
-
-No changes needed to URDF, EKF config, Nav2 params, or controller YAML.
-
----
-
-## Future option: ESP32 fallback display
-
-If a minimal always-on display is wanted independent of ROS (e.g. show WiFi/agent status even when Pi is booting), a second smaller OLED could be driven directly from the ESP32 over SPI using the u8g2 library. This is a separate future addition — do not mix it with the Pi display above.
+- **luma.oled doesn't work for SSD1309** — see Design Decisions above. Use spidev directly.
+- **DC wire must be pin 22 (right column, row 11)** — not pin 21 (left column, row 11, which is GPIO9/MISO). Silent failure: no error, no display.
+- **`socket.gethostbyname(socket.gethostname())` returns `127.0.1.1`** on Ubuntu 22.04 due to `/etc/hosts`. Use UDP socket trick instead:
+  ```python
+  s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+  s.connect(('8.8.8.8', 80))
+  ip = s.getsockname()[0]
+  s.close()
+  ```
+- **SPI mode 3 required** (`sp.mode = 0b11`) — Waveshare module requires CPOL=1, CPHA=1.

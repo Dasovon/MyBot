@@ -22,7 +22,7 @@ ROS 2 Humble differential drive robot. RPi 4 + Arduino Nano (production stack). 
   - SPI mode, wired to Pi SPI0: MOSI=GPIO10, SCLK=GPIO11, CE0=GPIO8, DC=GPIO25, RST=GPIO27
   - Driver: spidev + RPi.GPIO directly — do NOT use luma.oled (its ssd1309 sends SSD1306 charge pump command which corrupts init)
   - Node: `oled_display_node.py` — shows IP, battery, velocity, pose, nav status at 2Hz
-  - Included in `launch_robot.launch.py`
+  - Runs as `oled-display.service` systemd service (starts at boot, before robot launch)
 
 **Next steps:**
 1. Object Tracking with OpenCV (final tutorial chapter)

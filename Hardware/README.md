@@ -67,7 +67,7 @@ Complete hardware reference for the MyBot differential drive robot.
 | RPLidar A1 M8 | [sensors/rplidar-a1.md](sensors/rplidar-a1.md) | Production |
 | Intel RealSense D435 | [camera/realsense-d435.md](camera/realsense-d435.md) | Production |
 | DFRobot DFR0205 | [power/dfr0205.md](power/dfr0205.md) | Production |
-| Waveshare 2.42" OLED | [display/oled-2.42inch.md](display/oled-2.42inch.md) | Pending install |
+| Waveshare 2.42" OLED | [display/oled-2.42inch.md](display/oled-2.42inch.md) | Production |
 
 ---
 

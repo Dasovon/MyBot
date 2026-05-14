@@ -46,6 +46,10 @@ The module ships in **4-wire SPI mode** by default — use it as-is. No resistor
 | **SPI (default)** | R1, R4 populated | DIN=MOSI, CLK=SCLK, CS and DC active — **use this** |
 | I2C | R2, R3 populated | requires PCB resistor swap |
 
+**Verify before wiring:** flip the board over and check the two 3-pad selector groups near the "SPI I2C" label. Each group should have a 0-ohm resistor bridging the **left two pads** (the pads closer to the "SPI" text). The right pad of each group should be empty.
+
+![SPI mode resistor positions](spi-mode-resistors.jpeg)
+
 ---
 
 ## MyBot Wiring — Raspberry Pi, SPI mode
@@ -115,7 +119,7 @@ for page in range(8):
 
 **ROS 2 integration:** `oled_display_node.py` uses this same spidev approach plus Pillow for layout rendering. Black pixels (`fill=0`) in PIL appear lit on the display; white pixels are off.
 
-**ROS 2 integration:** write a Python node that subscribes to `/battery_state`, `/diff_cont/odom`, and `/odom`, then renders to the display using Pillow. See `docs/oled-display-plan.md` for the full plan.
+The node runs as a systemd service (`oled-display.service`) that starts at boot and restarts automatically. See `docs/oled-display-plan.md` for implementation notes.
 
 ---
 

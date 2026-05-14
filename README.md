@@ -1,6 +1,6 @@
 # MyBot
 
-**Autonomous differential drive robot built on ROS 2 Humble** — Nav2 navigation, RPLidar SLAM, BNO055 IMU fusion, Intel RealSense D435 depth camera, and an in-progress ESP32-S3 + micro-ROS migration replacing the Arduino Nano.
+**Autonomous differential drive robot built on ROS 2 Humble** — Nav2 navigation, RPLidar SLAM, BNO055 IMU + EKF fusion, Intel RealSense D435 depth camera, ESP32-S3 + micro-ROS motor/sensor controller, and an OLED status display.
 
 [![ROS 2](https://img.shields.io/badge/ROS%202-Humble-blue?logo=ros)](https://docs.ros.org/en/humble/)
 [![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%204-red?logo=raspberrypi)](https://www.raspberrypi.com/)
@@ -37,8 +37,8 @@ Based on the [Articulated Robotics](https://articulatedrobotics.xyz/category/bui
 | BNO055 IMU + EKF fusion | ✅ working |
 | Nav2 autonomous navigation | ✅ working |
 | Intel RealSense D435 (color + depth) | ✅ working — RSUSB backend |
-| INA219 battery monitor | ✅ working (Pi I2C, temporary) |
-| ESP32-S3 micro-ROS migration | 🔄 in progress — all bench tests ✅, full firmware next |
+| ESP32-S3 + micro-ROS (motors, IMU, battery) | ✅ working — replaces Arduino Nano + Pi I2C nodes |
+| Waveshare 2.42" OLED status display | ✅ working — starts at boot via systemd |
 | Object tracking (OpenCV) | ⬜ pending |
 
 ---
@@ -48,14 +48,14 @@ Based on the [Articulated Robotics](https://articulatedrobotics.xyz/category/bui
 | Component | Part | Notes |
 |---|---|---|
 | SBC | Raspberry Pi 4 | Ubuntu 22.04, ROS 2 Humble |
-| Motor controller (current) | Arduino Nano | powered via Pi USB; ros_arduino_bridge firmware |
-| Motor controller (target) | ESP32-S3-DevKitC-1 | micro-ROS, WiFi OTA; powered via Pi USB |
-| Motor driver | Adafruit TB6612FNG | replaces L298N |
+| Motor controller | ESP32-S3-DevKitC-1 | micro-ROS over USB; WiFi OTA; replaces Arduino Nano |
+| Motor driver | Adafruit TB6612FNG | |
 | Motors | JGA25-371 DC12V 130RPM | 45:1 gear ratio, 11 PPR encoder |
 | Lidar | RPLidar A1 M8 | 12m range, 360° |
-| IMU | Adafruit BNO055 | I2C, NDOF fusion mode |
+| IMU | Adafruit BNO055 | on ESP32 I2C (GPIO8/9), NDOF fusion mode |
 | Camera | Intel RealSense D435 | USB 3.2, libusb/RSUSB backend |
-| Power monitor | Adafruit INA219 | I2C, publishes `/battery_state` |
+| Power monitor | Adafruit INA219 | on ESP32 I2C (GPIO8/9), publishes `/battery_state` |
+| Display | Waveshare 2.42" OLED | SSD1309, SPI0, starts at boot |
 | Power distribution | DFRobot DFR0205 | DC-DC buck converter, 3.6–25V in, 5A/25W |
 
 **Chassis:** custom differential drive, 240×200mm, dual-deck. Wheel separation 179mm, wheel radius 34mm.
@@ -100,26 +100,25 @@ Arduino Nano (ros_arduino_bridge)
   └── closed-loop PID, TB6612 motor driver, quadrature encoders
 ```
 
-### ESP32-S3 migration (branch: `feature/esp32-microros`)
+### ESP32-S3 + micro-ROS (production)
 
-The ESP32-S3 replaces both the Arduino Nano and Pi-side BNO055/INA219 I2C nodes. The Pi-side EKF, Nav2, and AMCL stack require **zero changes** — the ESP32 publishes identical topics over micro-ROS.
-
-All bench tests confirmed: BNO055 ✅, INA219 ✅, encoders ✅, motors ✅, micro-ROS transport ✅.
+The ESP32-S3 replaced both the Arduino Nano and Pi-side BNO055/INA219 I2C nodes. The Pi-side EKF, Nav2, and AMCL stack required zero changes — the ESP32 publishes identical topics over micro-ROS.
 
 ```
 Raspberry Pi 4
-  └── micro_ros_agent (~/microros_ws, serial /dev/ttyACM0)
+  ├── micro_ros_agent (~/microros_ws, serial /dev/ttyACM0)
+  └── oled-display.service (systemd, starts at boot)
 
         ↕ USB serial — native HWCDC (ARDUINO_USB_CDC_ON_BOOT=1)
 
-ESP32-S3 (Lonely Binary expansion base, 192.168.86.43)
+ESP32-S3 (Lonely Binary expansion base)
   ├── encoders (GPIO40-42,39) + PID → /diff_cont/odom
   ├── BNO055 (I2C GPIO8/9, 0x28) → /imu/imu
   ├── INA219 (I2C GPIO8/9, 0x40) → /battery_state
   ├── TB6612 motors (GPIO10-15)
   └── subscribes /diff_cont/cmd_vel_unstamped
 
-WiFi (192.168.86.43) → OTA flashing + TelnetStream monitor (port 23)
+WiFi → OTA flashing + TelnetStream monitor (port 23)
 ```
 
 ---
