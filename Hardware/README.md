@@ -43,6 +43,12 @@ Complete hardware reference for the MyBot differential drive robot.
    └────────────────────────────┘
 
    RealSense D435 → Pi USB 3.0 (separate)
+
+   Pi SPI0 (GPIO10/11/8/25/27):
+   ┌────────────────────────────┐
+   │  Waveshare 2.42" OLED      │
+   │  128×64 SSD1309            │
+   └────────────────────────────┘
 ```
 
 ---
@@ -61,6 +67,7 @@ Complete hardware reference for the MyBot differential drive robot.
 | RPLidar A1 M8 | [sensors/rplidar-a1.md](sensors/rplidar-a1.md) | Production |
 | Intel RealSense D435 | [camera/realsense-d435.md](camera/realsense-d435.md) | Production |
 | DFRobot DFR0205 | [power/dfr0205.md](power/dfr0205.md) | Production |
+| Waveshare 2.42" OLED | [display/oled-2.42inch.md](display/oled-2.42inch.md) | Pending install |
 
 ---
 
@@ -75,6 +82,7 @@ Complete hardware reference for the MyBot differential drive robot.
 | Pi USB 3.0 (5V) | RealSense D435 | ~900mA |
 | ESP32 3.3V | BNO055 | ~12mA |
 | ESP32 3.3V | INA219 | ~1mA |
+| Pi 3.3V | Waveshare 2.42" OLED | ~20mA |
 
 > DFR0205 is rated 5A @ 5V / 25W max. Pi + USB peripherals approach this limit — avoid running all USB devices simultaneously at full load.
 

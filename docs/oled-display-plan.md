@@ -5,41 +5,40 @@
 
 ---
 
-## Recommendation: Run on the Pi, I2C mode
+## Recommendation: Run on the Pi, SPI mode
 
 **Why Pi, not ESP32:**
 
 | Factor | Pi | ESP32 |
 |---|---|---|
-| I2C bus availability | Bus 1 is completely free after ESP32 migration | Bus already used by BNO055 + INA219; SPI would need 5 free GPIOs on a tight board |
 | Data richness | Full ROS graph: Nav2 status, EKF pose, battery, velocity | Only local sensor data; no Nav2 awareness |
 | Implementation risk | Separate Python node — a crash can't affect motors | Adding display management to the real-time PID/micro-ROS loop adds complexity and timing risk |
-| Library support | `luma.oled` has native SSD1309 I2C support; Pillow for layout | u8g2 works but embedded C layout code is significantly more work |
+| Library support | `luma.oled` has native SSD1309 SPI support; Pillow for layout | u8g2 works but embedded C layout code is significantly more work |
 | Serial port | Serial free for normal use | Serial is owned by micro-ROS transport; debug output is TelnetStream only |
-| Wiring | 4 wires to existing I2C header | 5 wires (SPI) or I2C shared with sensors already at I2C limit |
+| Bus availability | SPI0 bus is completely free | I2C bus already used by BNO055 + INA219 |
 
-**Why I2C, not SPI (on Pi):**  
-The Pi's SPI bus is currently unused, but I2C requires only 4 wires and plugs directly into the existing Pi I2C header (GPIO2/3) with no additional GPIO use. The SSD1309 at I2C runs fine for a low-refresh-rate status display.
+**Why SPI, not I2C (on Pi):**  
+The module ships in SPI mode — no resistor swap needed. SPI is faster and more reliable than I2C; at 2 Hz refresh rate the speed difference is irrelevant, but avoiding the PCB modification is a clear win.
 
 ---
 
 ## Wiring Summary
 
-Module ships in SPI mode — **resistor swap required before wiring** (move R1→R2 and R4→R3 on the PCB).
+Module ships in SPI mode — use it as-is, no resistor swap needed.
 
 ```
-Waveshare 2.42" OLED          Raspberry Pi
-─────────────────────         ────────────
-VCC  ──────────────────────→  3.3V  (pin 1)
-GND  ──────────────────────→  GND   (pin 6)
-DIN  ──────────────────────→  GPIO2 / SDA1 (pin 3)
-CLK  ──────────────────────→  GPIO3 / SCL1 (pin 5)
-CS   ──────────────────────→  GND   (any)
-DC   ──────────────────────→  GND   (any)  → address 0x3C
-RST  ──────────────────────→  3.3V  (pin 1)
+Waveshare 2.42" OLED          Raspberry Pi (BCM → Board)
+─────────────────────         ─────────────────────────
+VCC  ──────────────────────→  3.3V              (pin  1)
+GND  ──────────────────────→  GND               (pin  6)
+DIN  ──────────────────────→  GPIO10 SPI0_MOSI  (pin 19)
+CLK  ──────────────────────→  GPIO11 SPI0_SCLK  (pin 23)
+CS   ──────────────────────→  GPIO8  SPI0_CE0   (pin 24)
+DC   ──────────────────────→  GPIO25            (pin 22)
+RST  ──────────────────────→  GPIO27            (pin 13)
 ```
 
-Confirm after wiring: `sudo i2cdetect -y 1` should show `3c`.
+Confirm after wiring: `ls /dev/spidev*` should show `/dev/spidev0.0`.
 
 ---
 
@@ -73,9 +72,9 @@ States for the bottom status line:
 
 ### 1. Physical
 
-- Perform resistor swap on the OLED PCB (SPI → I2C)
-- Wire to Pi I2C header (see wiring diagram above)
-- Run `sudo i2cdetect -y 1` to confirm `3c` appears
+- Wire to Pi SPI0 header per the wiring diagram above (no resistor swap — module ships in SPI mode)
+- Enable SPI: `sudo raspi-config` → Interface Options → SPI → Enable → reboot
+- Verify: `ls /dev/spidev*` should show `/dev/spidev0.0`
 
 ### 2. Install library on Pi
 
@@ -85,10 +84,10 @@ sudo pip3 install luma.oled pillow
 
 Verify with a one-shot test before writing the ROS node:
 ```python
-from luma.core.interface.serial import i2c
+from luma.core.interface.serial import spi
 from luma.oled.device import ssd1309
 from luma.core.render import canvas
-serial = i2c(port=1, address=0x3C)
+serial = spi(device=0, port=0, gpio_DC=25, gpio_RST=27)
 device = ssd1309(serial)
 with canvas(device) as draw:
     draw.text((0, 0), "MyBot online", fill="white")
@@ -109,7 +108,7 @@ The node should:
 
 Key imports:
 ```python
-from luma.core.interface.serial import i2c
+from luma.core.interface.serial import spi
 from luma.oled.device import ssd1309
 from PIL import Image, ImageDraw, ImageFont
 ```

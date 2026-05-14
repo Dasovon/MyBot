@@ -1,5 +1,7 @@
 # Waveshare 2.42inch OLED Module
 
+![Waveshare 2.42inch OLED Module](oled-2.42inch.png)
+
 **Role in MyBot:** Robot status dashboard mounted on the chassis — shows battery voltage, velocity, estimated pose, and connection state at a glance without needing a laptop.
 
 ---
@@ -37,48 +39,38 @@
 
 ## Interface Selection
 
-The module ships in **4-wire SPI mode** by default. Two 0Ω resistors on the PCB select the mode:
+The module ships in **4-wire SPI mode** by default — use it as-is. No resistor swap needed.
 
 | Mode | Resistor position | Notes |
 |---|---|---|
-| SPI (default) | R1, R4 populated | DIN=MOSI, CLK=SCLK, CS and DC active |
-| I2C | R2, R3 populated | DIN=SDA, CLK=SCL, CS→GND, DC sets address |
-
-To switch to I2C: move R1→R2 and R4→R3 (requires soldering iron + steady hand, or order pre-configured).
+| **SPI (default)** | R1, R4 populated | DIN=MOSI, CLK=SCLK, CS and DC active — **use this** |
+| I2C | R2, R3 populated | requires PCB resistor swap |
 
 ---
 
-## MyBot Wiring — Raspberry Pi, I2C mode (recommended)
+## MyBot Wiring — Raspberry Pi, SPI mode
 
-Pi I2C bus 1 is completely free after the ESP32 migration (BNO055 and INA219 moved to ESP32). The display plugs straight into the existing I2C header.
+The Pi's SPI0 bus is unused. The display plugs in directly with no resistor changes.
 
-| Module Pin | Signal | Raspberry Pi | Pi Physical Pin |
+| Module Pin | Signal | Raspberry Pi (BCM) | Pi Board Pin |
 |---|---|---|---|
-| VCC | 3.3V | 3.3V power | Pin 1 |
-| GND | GND | Ground | Pin 6 |
-| DIN | SDA | GPIO2 / SDA1 | Pin 3 |
-| CLK | SCL | GPIO3 / SCL1 | Pin 5 |
-| CS | — | GND | Pin 6 (or any GND) |
-| DC | — | GND | → I2C address 0x3C |
-| RST | — | 3.3V | Pin 1 (holds out of reset) |
+| VCC | 3.3V | 3.3V | 1 |
+| GND | GND | GND | 6 |
+| DIN | MOSI | GPIO10 / SPI0_MOSI | 19 |
+| CLK | SCLK | GPIO11 / SPI0_SCLK | 23 |
+| CS | CE0 | GPIO8 / SPI0_CE0 | 24 |
+| DC | Data/Cmd | GPIO25 | 22 |
+| RST | Reset | GPIO27 | 13 |
 
-> CS and DC are tied to GND permanently. RST tied high means no software reset — acceptable for a status display. Wire RST to a spare GPIO (e.g. GPIO24) if software reboot of the display is needed.
-
-**Verify with:**
+**Enable SPI on Pi (one-time):**
 ```bash
-sudo i2cdetect -y 1    # should show 0x3C
+sudo raspi-config   # Interface Options → SPI → Enable
 ```
 
----
-
-## I2C Address
-
-| DC pin | I2C Address |
-|---|---|
-| LOW (GND) | **0x3C** — recommended, matches luma.oled default |
-| HIGH (3.3V) | 0x3D |
-
-No conflict with any other device on the Pi I2C bus (BNO055 was 0x28, INA219 was 0x40 — both now live on the ESP32).
+**Verify:**
+```bash
+ls /dev/spidev*   # should show /dev/spidev0.0
+```
 
 ---
 
@@ -93,11 +85,11 @@ sudo pip3 install luma.oled pillow
 
 **Minimal test:**
 ```python
-from luma.core.interface.serial import i2c
+from luma.core.interface.serial import spi
 from luma.oled.device import ssd1309
 from luma.core.render import canvas
 
-serial = i2c(port=1, address=0x3C)
+serial = spi(device=0, port=0, gpio_DC=25, gpio_RST=27)
 device = ssd1309(serial)
 
 with canvas(device) as draw:
