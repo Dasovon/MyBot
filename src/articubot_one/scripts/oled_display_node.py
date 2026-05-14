@@ -11,8 +11,8 @@ from nav_msgs.msg import Odometry
 from action_msgs.msg import GoalStatusArray, GoalStatus
 
 try:
-    from luma.core.interface.serial import spi
-    from luma.oled.device import ssd1309
+    import spidev
+    import RPi.GPIO as GPIO
     from PIL import Image, ImageDraw, ImageFont
     DISPLAY_AVAILABLE = True
 except ImportError:
@@ -21,6 +21,10 @@ except ImportError:
 FONT_PATH = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
 FONT_SIZE = 11
 AGENT_TIMEOUT = 3.0
+DC_PIN = 25
+RST_PIN = 27
+WIDTH = 128
+HEIGHT = 64
 
 BEST_EFFORT_QOS = QoSProfile(
     depth=10,
@@ -33,7 +37,7 @@ class OledDisplayNode(Node):
     def __init__(self):
         super().__init__('oled_display')
 
-        self._device = None
+        self._spi = None
         self._font = None
         self._init_display()
 
@@ -55,16 +59,66 @@ class OledDisplayNode(Node):
         self.create_timer(0.5, self._render)
         self.get_logger().info('OLED display node started')
 
+    def _cmd(self, c):
+        GPIO.output(DC_PIN, GPIO.LOW)
+        self._spi.writebytes([c])
+
     def _init_display(self):
         if not DISPLAY_AVAILABLE:
-            self.get_logger().warn('luma.oled not installed — display disabled')
+            self.get_logger().warn('spidev/RPi.GPIO not installed — display disabled')
             return
         try:
-            serial = spi(device=0, port=0, gpio_DC=25, gpio_RST=27)
-            self._device = ssd1309(serial)
+            GPIO.setwarnings(False)
+            GPIO.setmode(GPIO.BCM)
+            GPIO.setup(DC_PIN, GPIO.OUT)
+            GPIO.setup(RST_PIN, GPIO.OUT)
+
+            self._spi = spidev.SpiDev()
+            self._spi.open(0, 0)
+            self._spi.max_speed_hz = 1000000
+            self._spi.mode = 0b11
+
+            # Hardware reset
+            GPIO.output(RST_PIN, GPIO.HIGH); time.sleep(0.1)
+            GPIO.output(RST_PIN, GPIO.LOW);  time.sleep(0.1)
+            GPIO.output(RST_PIN, GPIO.HIGH); time.sleep(0.1)
+
+            # SSD1309 init sequence
+            self._cmd(0xAE)
+            self._cmd(0x00); self._cmd(0x10)
+            self._cmd(0x20); self._cmd(0x00)
+            self._cmd(0xFF)
+            self._cmd(0xA6)
+            self._cmd(0xA8); self._cmd(0x3F)
+            self._cmd(0xD3); self._cmd(0x00)
+            self._cmd(0xD5); self._cmd(0x80)
+            self._cmd(0xD9); self._cmd(0x22)
+            self._cmd(0xDA); self._cmd(0x12)
+            self._cmd(0xDB); self._cmd(0x40)
+            time.sleep(0.1)
+            self._cmd(0xAF)
+
             self._font = ImageFont.truetype(FONT_PATH, FONT_SIZE)
         except Exception as e:
             self.get_logger().warn(f'Display init failed: {e}')
+            self._spi = None
+
+    def _show(self, image):
+        pixels = image.convert('1').load()
+        for page in range(8):
+            self._cmd(0xB0 + page)
+            self._cmd(0x00)
+            self._cmd(0x10)
+            GPIO.output(DC_PIN, GPIO.HIGH)
+            row = []
+            for x in range(WIDTH):
+                byte = 0xFF
+                for bit in range(8):
+                    y = page * 8 + bit
+                    if pixels[x, y] == 0:
+                        byte &= ~(1 << bit)
+                row.append(~byte & 0xFF)
+            self._spi.writebytes(row)
 
     def _battery_cb(self, msg):
         self._battery_voltage = msg.voltage
@@ -99,17 +153,17 @@ class OledDisplayNode(Node):
 
     def _status_line(self):
         if self._last_odom_t == 0.0 or (time.monotonic() - self._last_odom_t) > AGENT_TIMEOUT:
-            return '✗ AGENT OFFLINE'
+            return 'AGENT OFFLINE'
         if self._nav_status == 'NAVIGATING':
-            return '● NAVIGATING'
+            return 'NAVIGATING'
         if self._nav_status == 'SUCCEEDED':
-            return '✓ GOAL REACHED'
+            return 'GOAL REACHED'
         if self._nav_status == 'UNKNOWN':
-            return '● TELEOP'
-        return '● IDLE'
+            return 'TELEOP'
+        return 'IDLE'
 
     def _render(self):
-        if self._device is None:
+        if self._spi is None:
             return
 
         try:
@@ -121,21 +175,22 @@ class OledDisplayNode(Node):
                if self._battery_voltage is not None else '--')
         vel = (f'{self._vel_linear:.2f}m/s  {self._vel_angular:.1f}r/s'
                if self._vel_linear is not None else '--')
-        pos = (f'x={self._pos_x:.2f} y={self._pos_y:.2f} {self._pos_yaw:.0f}°'
+        pos = (f'x={self._pos_x:.2f} y={self._pos_y:.2f} {self._pos_yaw:.0f}d'
                if self._pos_x is not None else '--')
 
-        img = Image.new('1', (self._device.width, self._device.height), 0)
+        # White background (off), black text (lit) — matches SSD1309 pixel convention
+        img = Image.new('1', (WIDTH, HEIGHT), 1)
         draw = ImageDraw.Draw(img)
         f = self._font
 
-        draw.text((0,  0), f'MyBot  {ip}', font=f, fill=1)
-        draw.text((0, 13), f'BAT {bat}', font=f, fill=1)
-        draw.text((0, 26), f'VEL {vel}', font=f, fill=1)
-        draw.text((0, 39), f'POS {pos}', font=f, fill=1)
-        draw.text((0, 52), self._status_line(), font=f, fill=1)
+        draw.text((0,  0), f'MyBot  {ip}', font=f, fill=0)
+        draw.text((0, 13), f'BAT {bat}', font=f, fill=0)
+        draw.text((0, 26), f'VEL {vel}', font=f, fill=0)
+        draw.text((0, 39), f'POS {pos}', font=f, fill=0)
+        draw.text((0, 52), self._status_line(), font=f, fill=0)
 
         try:
-            self._device.display(img)
+            self._show(img)
         except Exception as e:
             self.get_logger().warn(f'Display render error: {e}')
 
