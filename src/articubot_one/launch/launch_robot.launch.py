@@ -46,13 +46,9 @@ def generate_launch_description():
                 )])
     )
 
-    oled = Node(
-        package=package_name,
-        executable='oled_display_node.py',
-    )
-
     # NOTE: EKF runs on dev machine via dev_launch.py — fuses /diff_cont/odom + /imu/imu -> /odom
     # ESP32 publishes: /diff_cont/odom, /imu/imu, /battery_state, subscribes: /diff_cont/cmd_vel_unstamped
+    # oled_display_node runs as a systemd service (oled-display.service) — starts on boot independently
 
     return LaunchDescription([
         rsp,
@@ -60,5 +56,4 @@ def generate_launch_description():
         micro_ros_agent,
         lidar,
         camera,
-        oled,
     ])
