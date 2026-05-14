@@ -27,15 +27,15 @@ The module ships in SPI mode — no resistor swap needed. SPI is faster and more
 Module ships in SPI mode — use it as-is, no resistor swap needed.
 
 ```
-Waveshare 2.42" OLED          Raspberry Pi (BCM → Board)
-─────────────────────         ─────────────────────────
-VCC  ──────────────────────→  3.3V              (pin  1)
-GND  ──────────────────────→  GND               (pin  6)
-DIN  ──────────────────────→  GPIO10 SPI0_MOSI  (pin 19)
-CLK  ──────────────────────→  GPIO11 SPI0_SCLK  (pin 23)
-CS   ──────────────────────→  GPIO8  SPI0_CE0   (pin 24)
-DC   ──────────────────────→  GPIO25            (pin 22)
-RST  ──────────────────────→  GPIO27            (pin 13)
+Waveshare 2.42" OLED          Wire     Raspberry Pi (BCM → Board)
+─────────────────────         ──────   ─────────────────────────
+VCC  ──────────────────────→  Red   →  3.3V              (pin  1)
+GND  ──────────────────────→  Black →  GND               (pin  6)
+DIN  ──────────────────────→  Blue  →  GPIO10 SPI0_MOSI  (pin 19)
+CLK  ──────────────────────→  Yellow→  GPIO11 SPI0_SCLK  (pin 23)
+CS   ──────────────────────→  Orange→  GPIO8  SPI0_CE0   (pin 24)
+DC   ──────────────────────→  Green →  GPIO25            (pin 22)
+RST  ──────────────────────→  White →  GPIO27            (pin 13)
 ```
 
 Confirm after wiring: `ls /dev/spidev*` should show `/dev/spidev0.0`.

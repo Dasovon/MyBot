@@ -52,15 +52,15 @@ The module ships in **4-wire SPI mode** by default — use it as-is. No resistor
 
 The Pi's SPI0 bus is unused. The display plugs in directly with no resistor changes.
 
-| Module Pin | Signal | Raspberry Pi (BCM) | Pi Board Pin |
-|---|---|---|---|
-| VCC | 3.3V | 3.3V | 1 |
-| GND | GND | GND | 6 |
-| DIN | MOSI | GPIO10 / SPI0_MOSI | 19 |
-| CLK | SCLK | GPIO11 / SPI0_SCLK | 23 |
-| CS | CE0 | GPIO8 / SPI0_CE0 | 24 |
-| DC | Data/Cmd | GPIO25 | 22 |
-| RST | Reset | GPIO27 | 13 |
+| Module Pin | Wire Color | Signal | Raspberry Pi (BCM) | Pi Board Pin |
+|---|---|---|---|---|
+| VCC | Red | 3.3V | 3.3V | 1 |
+| GND | Black | GND | GND | 6 |
+| DIN | Blue | MOSI | GPIO10 / SPI0_MOSI | 19 |
+| CLK | Yellow | SCLK | GPIO11 / SPI0_SCLK | 23 |
+| CS | Orange | CE0 | GPIO8 / SPI0_CE0 | 24 |
+| DC | Green | Data/Cmd | GPIO25 | 22 |
+| RST | White | Reset | GPIO27 | 13 |
 
 **Enable SPI on Pi (one-time):**
 ```bash
