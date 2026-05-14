@@ -76,28 +76,44 @@ ls /dev/spidev*   # should show /dev/spidev0.0
 
 ## Software — Raspberry Pi
 
-The SSD1309 is register-compatible with the SSD1306 but requires explicit driver selection. The `luma.oled` Python library has native SSD1309 support.
-
 **Install:**
 ```bash
-sudo apt-get install -y python3-gpiozero   # pulls in lgpio — required on Ubuntu 22.04
-sudo pip3 install luma.oled pillow
+sudo pip3 install spidev pillow
+# RPi.GPIO is already available on Ubuntu 22.04 via python3-rpi.gpio
 ```
 
-> **Ubuntu 22.04 note:** `python3-gpiozero` (which installs `lgpio`) is required. RPi.GPIO does not work on Jammy; without it, luma.oled initialises without error but the display shows nothing.
+> **Do NOT use luma.oled for SSD1309.** luma.oled's `ssd1309` class is an alias for `ssd1306` — it sends the SSD1306 charge pump command (`0x8D 0x14`) which is undefined on SSD1309 and corrupts initialization. Use spidev + RPi.GPIO directly.
 
 **Minimal test:**
 ```python
-from luma.core.interface.serial import spi
-from luma.oled.device import ssd1309
-from luma.core.render import canvas
+import RPi.GPIO as GPIO, spidev, time
 
-serial = spi(device=0, port=0, gpio_DC=25, gpio_RST=27)
-device = ssd1309(serial)
+DC, RST = 25, 27
+GPIO.setwarnings(False); GPIO.setmode(GPIO.BCM)
+GPIO.setup(DC, GPIO.OUT); GPIO.setup(RST, GPIO.OUT)
 
-with canvas(device) as draw:
-    draw.text((0, 0), "MyBot online", fill="white")
+sp = spidev.SpiDev(); sp.open(0, 0)
+sp.max_speed_hz = 1000000; sp.mode = 0b11
+
+def cmd(c): GPIO.output(DC, GPIO.LOW); sp.writebytes([c])
+
+GPIO.output(RST, GPIO.HIGH); time.sleep(0.1)
+GPIO.output(RST, GPIO.LOW);  time.sleep(0.1)
+GPIO.output(RST, GPIO.HIGH); time.sleep(0.1)
+
+for c in [0xAE, 0x00, 0x10, 0x20, 0x00, 0xFF, 0xA6,
+          0xA8, 0x3F, 0xD3, 0x00, 0xD5, 0x80,
+          0xD9, 0x22, 0xDA, 0x12, 0xDB, 0x40]:
+    cmd(c)
+time.sleep(0.1); cmd(0xAF)
+
+# Fill all pixels ON
+for page in range(8):
+    cmd(0xB0 + page); cmd(0x00); cmd(0x10)
+    GPIO.output(DC, GPIO.HIGH); sp.writebytes([0xFF] * 128)
 ```
+
+**ROS 2 integration:** `oled_display_node.py` uses this same spidev approach plus Pillow for layout rendering. Black pixels (`fill=0`) in PIL appear lit on the display; white pixels are off.
 
 **ROS 2 integration:** write a Python node that subscribes to `/battery_state`, `/diff_cont/odom`, and `/odom`, then renders to the display using Pillow. See `docs/oled-display-plan.md` for the full plan.
 

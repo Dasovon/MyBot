@@ -5,7 +5,7 @@
 ### What this project is
 ROS 2 Humble differential drive robot. RPi 4 + Arduino Nano (production stack). ESP32-S3 migration in progress to replace Arduino + Pi-side sensors. Based on Articulated Robotics tutorial series.
 
-### Current state (2026-05-10)
+### Current state (2026-05-14)
 - Nav2 autonomous navigation ✅ working (saved map at `~/mybot_ws/maps/my_map`)
 - RealSense D435 ✅ color + depth 640×480@15fps (RSUSB backend, fix #18)
 - **ESP32-S3 full firmware validated and driving** (`feature/esp32-microros`):
@@ -18,6 +18,11 @@ ROS 2 Humble differential drive robot. RPi 4 + Arduino Nano (production stack). 
   - **Teleop validated** ✅: forward, left turn, right turn, combined arc — all stable, no jolting
   - PID: Kp=30, Ki=150, KI_MAX=1.0, Kd=0. Coasts to stop on zero target (no hard braking).
   - Motor assignment: pid_l→PWMB (Motor B = Left), pid_r→PWMA (Motor A = Right)
+- **Waveshare 2.42" OLED display** ✅ working (2026-05-14):
+  - SPI mode, wired to Pi SPI0: MOSI=GPIO10, SCLK=GPIO11, CE0=GPIO8, DC=GPIO25, RST=GPIO27
+  - Driver: spidev + RPi.GPIO directly — do NOT use luma.oled (its ssd1309 sends SSD1306 charge pump command which corrupts init)
+  - Node: `oled_display_node.py` — shows IP, battery, velocity, pose, nav status at 2Hz
+  - Included in `launch_robot.launch.py`
 
 **Next steps:**
 1. Object Tracking with OpenCV (final tutorial chapter)
