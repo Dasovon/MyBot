@@ -80,8 +80,11 @@ The SSD1309 is register-compatible with the SSD1306 but requires explicit driver
 
 **Install:**
 ```bash
+sudo apt-get install -y python3-gpiozero   # pulls in lgpio — required on Ubuntu 22.04
 sudo pip3 install luma.oled pillow
 ```
+
+> **Ubuntu 22.04 note:** `python3-gpiozero` (which installs `lgpio`) is required. RPi.GPIO does not work on Jammy; without it, luma.oled initialises without error but the display shows nothing.
 
 **Minimal test:**
 ```python

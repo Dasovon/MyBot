@@ -79,8 +79,11 @@ States for the bottom status line:
 ### 2. Install library on Pi
 
 ```bash
+sudo apt-get install -y python3-gpiozero   # pulls in lgpio — required on Ubuntu 22.04
 sudo pip3 install luma.oled pillow
 ```
+
+`python3-gpiozero` / `lgpio` is required on Ubuntu 22.04 (Jammy). RPi.GPIO does not work reliably on this distro; without lgpio, luma.oled initialises silently but no pixels appear on the display.
 
 Verify with a one-shot test before writing the ROS node:
 ```python
