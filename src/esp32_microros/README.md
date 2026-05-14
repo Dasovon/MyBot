@@ -30,10 +30,10 @@ Work through the test sketches in order before using the full firmware.
 | Sketch | What it tests | Status |
 |---|---|---|
 | [`test_bno055`](test/test_bno055/) | BNO055 + INA219 over I2C, WiFi OTA, telnet monitor | ✅ confirmed |
-| [`test_encoders`](test/test_encoders/) | Quadrature encoder pulse counting and direction | ⬜ pending |
-| [`test_motors`](test/test_motors/) | TB6612 motor control with safety checklist | ⬜ pending |
-| [`test_microros`](test/test_microros/) | micro-ROS serial transport, heartbeat publisher | ⬜ pending |
-| [`src/main.cpp`](src/main.cpp) | Full firmware: motors + encoders + PID + BNO055 + micro-ROS | ⬜ pending |
+| [`test_encoders`](test/test_encoders/) | Quadrature encoder pulse counting and direction | ✅ confirmed |
+| [`test_motors`](test/test_motors/) | TB6612 motor control with safety checklist | ✅ confirmed |
+| [`test_microros`](test/test_microros/) | micro-ROS serial transport, heartbeat publisher | ✅ confirmed |
+| [`src/main.cpp`](src/main.cpp) | Full firmware: motors + encoders + PID + BNO055 + micro-ROS | ✅ confirmed |
 
 ---
 
@@ -41,7 +41,7 @@ Work through the test sketches in order before using the full firmware.
 
 ### I2C (BNO055 + INA219) — ESP32-S3-DevKitC-1
 
-> GPIO22 is not exposed on the DevKitC-1 board. Use GPIO8/9 instead of the ESP32 I2C defaults.
+> The Lonely Binary expansion base does not break out GPIO4–7 or GPIO25–27/32–36/43/44. Use GPIO8/9 for I2C instead of the ESP32-S3 defaults.
 
 | Signal | GPIO | Addr |
 |---|---|---|
@@ -55,12 +55,12 @@ Work through the test sketches in order before using the full firmware.
 | TB6612 | GPIO | Function |
 |---|---|---|
 | VCC | 3V3 | Logic supply (3.3V — no level shifter needed) |
-| PWMA | 25 | RIGHT motor speed (PWM) |
-| AIN2 | 26 | RIGHT motor direction B |
-| AIN1 | 27 | RIGHT motor direction A |
-| BIN1 | 32 | LEFT motor direction A |
-| BIN2 | 33 | LEFT motor direction B |
-| PWMB | 14 | LEFT motor speed (PWM) |
+| PWMA | 10 | RIGHT motor speed (PWM) |
+| AIN1 | 11 | RIGHT motor direction A |
+| AIN2 | 12 | RIGHT motor direction B |
+| PWMB | 13 | LEFT motor speed (PWM) |
+| BIN1 | 14 | LEFT motor direction A |
+| BIN2 | 15 | LEFT motor direction B |
 | STBY | — | Adafruit pullup — leave unwired |
 | VM | 12V motor supply | separate from logic supply |
 
@@ -72,10 +72,10 @@ Input-only pins — encoder outputs are push-pull so no pull resistors needed.
 
 | Signal | GPIO | Note |
 |---|---|---|
-| Left encoder A | 36 (VP) | interrupt capable |
-| Left encoder B | 39 (VN) | input only |
-| Right encoder A | 34 | interrupt capable |
-| Right encoder B | 35 | input only |
+| Left encoder A | 40 | interrupt capable |
+| Left encoder B | 41 | |
+| Right encoder A | 42 | interrupt capable |
+| Right encoder B | 39 | |
 
 ISR direction (matches validated Arduino firmware):
 - Left: `A == B on CHANGE` → forward (+)
@@ -85,17 +85,17 @@ ISR direction (matches validated Arduino firmware):
 
 | GPIO | Reason |
 |---|---|
-| 1, 3 | UART0 (USB serial) — used for micro-ROS transport |
-| 6–11 | Internal SPI flash |
-| 0, 2, 5, 12, 15 | Strapping pins — state matters at boot |
-| 34–39 | Input only — fine for encoders, cannot drive output |
+| 4, 5, 6, 7 | Not broken out on Lonely Binary expansion base |
+| 25–27, 32–36, 43, 44 | Not broken out on Lonely Binary expansion base |
+| 0, 45, 46 | ESP32-S3 strapping pins — state matters at boot |
+| 19, 20 | USB D−/D+ (native USB port — used for micro-ROS ttyACM0 transport) |
 
 ---
 
 ## Software Dependencies
 
 - [PlatformIO](https://platformio.org/) (VS Code extension or CLI)
-- micro-ROS for Arduino — Humble branch
+- `micro_ros_platformio` — Humble distro, serial transport (cross-compiles `libmicroros.a` at build time)
 - Adafruit BNO055 `^1.6.3`
 - Adafruit Unified Sensor `^1.1.14`
 - Adafruit INA219 `^1.2.1`
@@ -165,26 +165,26 @@ Bus: 11.44V  Shunt: 0.12mV  Current: 50.3mA
 
 Calibration: move the sensor in a figure-8 pattern until `S3 G3 A3 M3`.
 
-### test_encoders ⬜
+### test_encoders ✅
 
 Wire left and right encoders, then drive wheels by hand. Confirms:
 - Pulse counts increment for forward rotation (positive)
 - Left and right directions are independent
 - No missed pulses at speed
 
-### test_motors ⬜
+### test_motors ✅
 
 ⚠️ Run the on-screen safety checklist before powering motors. Confirms:
 - Both motors spin in the correct direction (forward command = forward motion)
 - PWM speed control responds correctly
 - TB6612 does not overheat
 
-### test_microros ⬜
+### test_microros ✅
 
 Requires the micro-ROS agent running on the Pi:
 
 ```bash
-ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyUSB0
+ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyACM0
 ```
 
 Confirms micro-ROS transport is alive by publishing a `/heartbeat` counter and subscribing to a test topic.
@@ -199,8 +199,8 @@ Run after all four test sketches pass.
 
 | Topic | Type | Rate |
 |---|---|---|
-| `/diff_cont/odom` | `nav_msgs/Odometry` | ~20 Hz |
-| `/imu/imu` | `sensor_msgs/Imu` | ~20 Hz |
+| `/diff_cont/odom` | `nav_msgs/Odometry` | ~30 Hz |
+| `/imu/imu` | `sensor_msgs/Imu` | ~30 Hz |
 | `/battery_state` | `sensor_msgs/BatteryState` | 1 Hz |
 
 **Topic subscribed:**
@@ -212,7 +212,7 @@ Run after all four test sketches pass.
 **On Pi — start the agent instead of the normal hardware nodes:**
 
 ```bash
-ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyUSB0
+ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyACM0
 ```
 
 Then launch the rest of the stack normally (EKF, Nav2, RViz2) — no changes needed.
@@ -224,8 +224,8 @@ Then launch the rest of the stack normally (EKF, Nav2, RViz2) — no changes nee
 ## Verify topics are live
 
 ```bash
-ros2 topic hz /diff_cont/odom        # expect ~20 Hz
-ros2 topic hz /imu/imu               # expect ~20 Hz
+ros2 topic hz /diff_cont/odom        # expect ~30 Hz
+ros2 topic hz /imu/imu               # expect ~30 Hz
 ros2 topic echo /diff_cont/odom --once
 ```
 
