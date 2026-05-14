@@ -37,4 +37,9 @@ install(
   DESTINATION share/${PROJECT_NAME}
 )
 
+install(
+  PROGRAMS scripts/ina219_node.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 ament_package()

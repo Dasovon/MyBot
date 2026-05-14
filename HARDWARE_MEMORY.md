@@ -69,37 +69,48 @@ ROS config: config/bno055_params.yaml
 - frame_id: imu_link
 - operation_mode: 0x0C (NDOF — full sensor fusion)
 
+Axis validation (2026-05-03):
+- IMU x-axis = robot forward (acceleration positive on x when driving forward)
+- IMU z-axis = robot yaw (gyro z negative for clockwise rotation)
+- placement_axis_remap: P1 (confirmed correct, no changes needed)
+- Circle test: gyro z = -0.494 rad/s at -0.525 rad/s commanded → IMU/cmd ratio 0.94
+
 ---
 
 ## Motor Driver Pin Mapping (Arduino → Adafruit TB6612)
 
-Replaced L298N with Adafruit TB6612 breakout (2026-04-25). Same physical Arduino pins.
+Replaced L298N with Adafruit TB6612 breakout (2026-04-25). Validated 2026-05-03.
 
 PWMA = D5   → right motor PWM speed   (Motor A = RIGHT)
-AIN2 = D6   → right motor direction B
-AIN1 = D7   → right motor direction A
-BIN1 = D8   → left motor direction A  (Motor B = LEFT)
-BIN2 = D9   → left motor direction B
+AIN1 = D7   → right motor FORWARD
+AIN2 = D6   → right motor BACKWARD
+BIN1 = D8   → left motor FORWARD     (Motor B = LEFT)
+BIN2 = D9   → left motor BACKWARD
 PWMB = D10  → left motor PWM speed
 
 STBY → not wired; Adafruit breakout has onboard pullup (defaults HIGH = enabled)
 
+Motor output wiring:
+  Right motor → AO1 + AO2  (both wires on MOTORA pads — NOT the GND pad between sections)
+  Left motor  → BO1 + BO2  (both wires on MOTORB pads — NOT the GND pad between sections)
+
 Firmware define: TB6612_MOTOR_DRIVER
 File: src/ros_arduino_bridge/ROSArduinoBridge/ROSArduinoBridge.ino
 
-Direction logic:
+Direction logic (TB6612 truth table):
   Forward:  xIN1=HIGH, xIN2=LOW + PWM
   Backward: xIN1=LOW,  xIN2=HIGH + PWM
   Coast:    xIN1=LOW,  xIN2=LOW
   Brake:    xIN1=HIGH, xIN2=HIGH
 
-**STATUS: First TB6612 unit damaged — replacement needed.**
-Cause: 12V motor supply reached AIN1/BIN1 logic input pins (max is 5.5V).
-Symptom: xIN1 pins read ~2V when driven HIGH — below 3.5V logic threshold — CW direction non-functional.
-Confirmed via multimeter: BIN1 = 11.9V with motor power connected.
+**STATUS: Replacement installed and validated 2026-05-03.**
+Both motors run in both directions. Teleop confirmed: i=forward, j/l=turn.
 
-BEFORE INSTALLING REPLACEMENT: verify VM wire has no breadboard bridge to AIN1 or BIN1.
-After installing new chip: validate motor direction with teleop. If a motor runs reversed, swap its output wires (Red/White) at the TB6612 terminals.
+History:
+- First unit (2026-04-25): destroyed by 12V reaching AIN1/BIN1 logic pins (max 5.5V)
+- Replacement: motor wires were on motor output pad + GND pad between sections instead of
+  both on MOTORA/MOTORB pads → only one direction worked. Fixed by moving wires to correct pads.
+- Left motor ran backward: swapped LEFT_MOTOR_FORWARD/BACKWARD (BIN1↔BIN2) in firmware.
 
 ---
 
@@ -133,6 +144,22 @@ new_value = old_value × (actual_distance / reported_distance)
 Wheel separation: 0.179 m  (179mm center-to-center, measured 2026-03-16)
 Wheel radius: 0.034 m  (68mm diameter measured; datasheet says 65mm)
 Controller update rate: 30 Hz
+
+Velocity limits (my_controllers.yaml):
+  linear max:  0.3 m/s   (each wheel at 0.3 m/s)
+  angular max: 3.35 rad/s  (= 2 × 0.3 / 0.179 — matched to linear for equal wheel speed)
+
+Velocity tracking validation (2026-05-03, 3 consistent runs, robot free to move on floor):
+  Speed   Forward  Spin
+  25%     83%      69%   ← motor deadband at low PWM — normal for DC motors
+  50%     92%      88%
+  75%     97%      93%
+  100%    98%      96%
+Left/right wheels symmetric within 0.002 m/s across all steps.
+Operating range (50–100%) tracks 88–98% for both modes.
+
+Note: holding the robot body while spinning creates lateral tire scrub → hard plateau at ~0.085 m/s.
+This is NOT a motor/firmware limit — robot must be free to rotate for normal behavior.
 
 ---
 
