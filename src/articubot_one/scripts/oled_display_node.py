@@ -11,7 +11,7 @@ from nav_msgs.msg import Odometry
 from action_msgs.msg import GoalStatusArray, GoalStatus
 
 try:
-    from luma.core.interface.serial import i2c
+    from luma.core.interface.serial import spi
     from luma.oled.device import ssd1309
     from PIL import Image, ImageDraw, ImageFont
     DISPLAY_AVAILABLE = True
@@ -60,7 +60,7 @@ class OledDisplayNode(Node):
             self.get_logger().warn('luma.oled not installed — display disabled')
             return
         try:
-            serial = i2c(port=1, address=0x3C, gpio_RST=27)
+            serial = spi(device=0, port=0, gpio_DC=25, gpio_RST=27)
             self._device = ssd1309(serial)
             self._font = ImageFont.truetype(FONT_PATH, FONT_SIZE)
         except Exception as e:
