@@ -1,68 +1,64 @@
 # CLAUDE.md
 
-## START HERE — Session Orientation
-
-Read this first at the start of every session before doing anything else.
+## Session Orientation — Read First
 
 ### What this project is
-A ROS 2 Humble differential drive robot (Raspberry Pi 4 + Arduino Nano) with RPLidar A1, BNO055 IMU, robot_localization EKF, Nav2 autonomous navigation, and a RealSense D435 depth camera. Based on the Articulated Robotics tutorial series.
+ROS 2 Humble differential drive robot. RPi 4 + Arduino Nano (production stack). ESP32-S3 migration in progress to replace Arduino + Pi-side sensors. Based on Articulated Robotics tutorial series.
 
-### Where we are right now (2026-05-07)
-**Nav2 autonomous navigation confirmed working (2026-05-05).** New room map made, Nav2 goal sent programmatically → SUCCEEDED. Robot navigates autonomously to goal poses.
-
-**RealSense D435 camera streaming confirmed working (2026-05-05).**
-Color and depth images reach the dev machine. See fix #24 for the full story.
-- Color: ~7 fps on dev machine, ~12 fps on Pi
-- Depth: ~11 fps on dev machine, ~15 fps on Pi
-- IR streams disabled (not needed for object tracking; saves USB bandwidth)
-- Camera is currently on USB 2.0 (fell from USB 3.0 during this session's uhubctl experiments). A Pi reboot will restore USB 3.0. The authorization reset script works on both paths.
-
-**⚠️ DO NOT run `sudo uhubctl -l 2 -p 2 -a off` on the camera's USB 3.0 port** — this causes the camera to fall back to the USB 2.0 hub and it will NOT return to USB 3.0 without a Pi reboot.
-
-**Current hardware architecture (2026-05-05):**
-- Arduino (CH340, /dev/arduino, 57600 baud): motor driver only — cmd_vel → motors + encoder odom
-- BNO055: wired directly to Pi I2C-1 (GPIO 2/3), addr 0x28 — temporary until ESP32 migration
-- RPLIDAR: /dev/rplidar (CP210x, 115200 baud)
-- RealSense D435: USB, streaming depth + color at 640x480x15fps (IR disabled)
-- INA219: wired to Pi I2C-1 (GPIO 2/3), addr 0x40, shares bus with BNO055 — publishes /battery_state at 1Hz
-- ESP32: future replacement for Arduino — will take over motors/encoders + BNO055 + INA219 via micro-ROS; not started yet
-
-**All sensors confirmed healthy (2026-05-07):**
-- RPLIDAR: Express mode, 4kHz/10Hz, 12m range, Health OK
-- Arduino: responding at 57600 baud, encoders and reset commands OK
-- BNO055: chip ID verified, gyro/accel/mag all 3/3 calibrated
-- RealSense D435: depth + color streaming confirmed
-- INA219: 11.38 V, +0.21 A confirmed at idle (VIN+ on battery+, VIN- on load side)
-
-**Map updated (2026-05-05).** New map saved: 232×321 @ 0.025 m/pix at `~/mybot_ws/maps/my_map` (Pi and dev). Copy lives at `~/mybot_ws/maps/` on dev machine.
+### Current state (2026-05-10)
+- Nav2 autonomous navigation ✅ working (saved map at `~/mybot_ws/maps/my_map`)
+- RealSense D435 ✅ color + depth 640×480@15fps (RSUSB backend, fix #18)
+- **ESP32-S3 full firmware validated and driving** (`feature/esp32-microros`):
+  - Hardware: ESP32-S3-DevKitC-1 + Lonely Binary expansion base
+  - WiFi OTA working — `pio run -e esp32-s3-ota --target upload`
+  - Wireless monitor: `nc esp32-mybot.local 23`
+  - Publishes: `/diff_cont/odom` (30Hz), `/imu/imu` (30Hz), `/battery_state` (1Hz)
+  - Subscribes: `/diff_cont/cmd_vel_unstamped`
+  - **Pi launch migrated**: `launch_robot.launch.py` now runs micro_ros_agent instead of ros2_control/bno055/ina219
+  - **Teleop validated** ✅: forward, left turn, right turn, combined arc — all stable, no jolting
+  - PID: Kp=30, Ki=150, KI_MAX=1.0, Kd=0. Coasts to stop on zero target (no hard braking).
+  - Motor assignment: pid_l→PWMB (Motor B = Left), pid_r→PWMA (Motor A = Right)
 
 **Next steps:**
 1. Object Tracking with OpenCV (final tutorial chapter)
-2. ESP32 migration: replace Arduino, move BNO055 + INA219 to ESP32 via micro-ROS
-3. Jetson Nano setup (Docker + ROS 2 Humble + CUDA)
+2. Jetson Nano setup (Docker + ROS 2 Humble + CUDA)
 
-### Which machine are you on?
-- If `hostname` returns `mybot` → you are on the **Pi**. Run commands directly.
-- If `hostname` returns `dev` → you are on the **dev machine**. SSH to Pi for hardware: `ssh ryan@mybot "..."`.
+---
+
+## Machines
+
+| | Pi | Dev (Linux) | Windows |
+|---|---|---|---|
+| Hostname | `mybot` | `dev` | `RyansPC` |
+| IP | `192.168.86.33` | `192.168.86.52` | `192.168.86.47` |
+| Workspace | `~/mybot_ws` | `~/dev_ws` | `C:\Users\Ryan\Documents\win_ws\MyBot` |
+| Repo path | `src/articubot_one` | `src/articubot_one` | `src/esp32_microros` (ESP32 only) |
+
+**Which machine am I on?** `hostname` → `mybot` = Pi | `dev` = Linux dev machine | `RyansPC` = Windows (ESP32 dev only)
+
+SSH to Pi: `ssh ryan@mybot "..."` — prefer hostname over IP.
 
 ### What runs where
 | Component | Machine |
-|-----------|---------|
-| ros2_control, motors, encoders | Pi |
-| RPLidar, BNO055 IMU, RealSense camera | Pi |
-| EKF (robot_localization) | Dev |
-| Nav2 (AMCL, planner, controller) | Dev |
-| RViz2, image processing, OpenCV | Dev |
+|---|---|
+| ros2_control, motors, encoders, RPLidar, BNO055, RealSense | Pi |
+| EKF, Nav2 (AMCL/planner/controller), RViz2, OpenCV | Dev |
 
-### Full launch sequence
+**ESP32 dev:** use dev (Linux) or Windows — no Pi needed for bench work.
+
+---
+
+## Launch Sequence
+
 ```bash
 # 1. Pi — hardware
 ssh ryan@mybot "source ~/mybot_ws/install/setup.bash && ros2 launch articubot_one launch_robot.launch.py"
+# alias: mybot-launch (clears /dev/arduino and /dev/rplidar first)
 
 # 2. Dev — EKF
 ros2 launch articubot_one dev_launch.py
 
-# 3. Dev — localization (AMCL + map server)
+# 3. Dev — localization
 ros2 launch articubot_one localization_launch.py
 
 # 4. Dev — Nav2
@@ -70,140 +66,216 @@ ros2 launch articubot_one navigation_launch.py
 
 # 5. Dev — RViz2
 rviz2
-# Fixed Frame: map | Add: Map /map (Durability: Transient Local), LaserScan /scan, RobotModel
-# Use 2D Pose Estimate to init AMCL, then Nav2 Goal to navigate
+# Fixed Frame: map | Add: Map /map (Transient Local), LaserScan /scan, RobotModel
+# 2D Pose Estimate → init AMCL | Nav2 Goal → navigate
 ```
 
 ---
 
-## Project Goal
-ROS 2 Humble differential drive robot stack for a Raspberry Pi + Arduino robot using `ros2_control`, `diffdrive_arduino`, and serial motor/encoder communication.
+## Key Config Values
 
-## Environment Note
-This repo runs on two machines. Claude Code is installed on both. Know which machine you are on:
+| Parameter | Value | Source |
+|---|---|---|
+| hardware plugin | `diffdrive_arduino/DiffDriveArduinoHardware` | ros2_control.xacro |
+| serial device | `/dev/arduino` (udev → ttyUSB0) | ros2_control.xacro |
+| baud rate | `57600` | ros2_control.xacro |
+| enc_counts_per_rev | `1010` | ros2_control.xacro |
+| wheel_separation | `0.179` m | my_controllers.yaml |
+| wheel_radius | `0.034` m | my_controllers.yaml |
+| controller update rate | `30` Hz | my_controllers.yaml |
+| left joint | `left_wheel_joint` | ros2_control.xacro |
+| right joint | `right_wheel_joint` | ros2_control.xacro |
 
-- **Pi** (`mybot`, 192.168.86.33): working directory `~/mybot_ws`. Run hardware commands directly.
-- **Dev** (`192.168.86.52`): working directory `~/dev_ws`. SSH to Pi for hardware: `ssh ryan@mybot "<command>"`. Pi's hostname `mybot` resolves via mDNS — prefer `mybot` over IP.
+---
 
-When on **dev**, use SSH for any Pi operations (launch robot, check serial, reflash Arduino, reboot, etc). Run ROS commands for dev-side nodes (EKF, Nav2, RViz) locally.
+## Critical Rules
+- Plugin string: **`diffdrive_arduino/DiffDriveArduinoHardware`** — never the old `diffdrive_arduino/DiffDriveArduino`
+- Branch locks: `diffdrive_arduino` → `humble` | `serial` → `newans_ros2`
+- `ros_arduino_bridge` = legacy reference only — active path is `ros2_control → diffdrive_arduino → serial`
+- After changing plugin packages, branches, or manifests: **true clean rebuild** (`rm -rf build install log`)
+- Never rename controller, joint, or plugin identifiers. ROS is extremely literal.
+- Never change serial device, baud, motor polarity, and encoder mapping all at once during debugging.
+- `articubot_one` still contains template placeholders in `README.md` and `package.xml` — treat as tutorial residue.
 
-## Tech Stack
-- Ubuntu 22.04 LTS
-- ROS 2 Humble
-- Python 3
-- CMake + `ament_cmake`
-- `xacro` / URDF
-- `ros2_control`
-- `controller_manager`
-- `diff_drive_controller`
-- `joint_state_broadcaster`
-- `twist_mux`
-- `robot_state_publisher`
-- `pluginlib`
-- `rclcpp`
-- `rclcpp_lifecycle`
-- `libserial-dev`
-- Gazebo support via `gazebo_ros2_control`
-- Navigation / perception assets present in package:
-  - Nav2 launch/config files
-  - RPLidar launch
-  - camera launch
-  - ball tracker launch
+## Coding Conventions
+- Build type: `ament_cmake` | Style: ROS-standard snake_case
+- Xacro and YAML own hardware constants — keep them there
+- Surgical edits only — tutorial-derived package has residue; avoid broad cleanup
+- `ros_arduino_bridge` stays in tree as reference; never treat as active runtime
 
-## Active Repos / Branches
-- `src/articubot_one` → branch `main`
-- `src/diffdrive_arduino` → branch `humble`
-- `src/serial` → branch `newans_ros2`
-- `src/ros_arduino_bridge` → branch `main` but **legacy / abandoned for runtime architecture**
+---
 
-## Directory Structure
-```text
-mybot_ws/
-├── src/
-│   ├── articubot_one/
-│   │   ├── launch/
-│   │   ├── config/
-│   │   ├── description/
-│   │   └── worlds/
-│   ├── diffdrive_arduino/
-│   │   ├── hardware/
-│   │   ├── bringup/
-│   │   ├── description/
-│   │   └── doc/
-│   ├── serial/
-│   │   ├── include/
-│   │   ├── src/
-│   │   ├── tests/
-│   │   └── examples/
-│   └── ros_arduino_bridge/
-│       └── ROSArduinoBridge/
-├── build/
-├── install/
-└── log/
+## Repos / Branches
+- `src/articubot_one` → `main`
+- `src/diffdrive_arduino` → `humble`
+- `src/serial` → `newans_ros2`
+- `src/ros_arduino_bridge` → `main` (legacy)
+- `feature/esp32-microros` — ESP32 + micro-ROS replacement (not merged)
+
+Remote: `github.com/Dasovon/MyBot`
+
+---
+
+## Hardware
+
+### Motors & Encoders
+- JGA25-371 DC12V 130RPM, 45:1 gear ratio, 11 PPR encoder
+- `enc_counts_per_rev = 1010` (2x quadrature × 11 × 45 ≈ 990; empirically validated → 1010)
+- Both encoders count positive for forward rotation (no inversion needed)
+
+### Encoder wire colors
+| Color | Signal |
+|---|---|
+| Red | Motor + |
+| White | Motor − |
+| Blue | Encoder 3.3–5V |
+| Black | Encoder GND |
+| Yellow | Encoder A |
+| Green | Encoder B |
+
+### TB6612 → Arduino Nano pin mapping
+| TB6612 | Arduino | Notes |
+|---|---|---|
+| VCC | 5V | sets logic thresholds — must match MCU voltage |
+| PWMA | D5 | RIGHT motor speed |
+| AIN2 | D6 | RIGHT motor dir B |
+| AIN1 | D7 | RIGHT motor dir A |
+| BIN1 | D8 | LEFT motor dir A |
+| BIN2 | D9 | LEFT motor dir B |
+| PWMB | D10 | LEFT motor speed |
+| STBY | — | Adafruit pullup, leave unwired |
+
+Motor A (PWMA/AIN1/AIN2) = **RIGHT** | Motor B (PWMB/BIN1/BIN2) = **LEFT**
+
+⚠️ First TB6612 damaged — 12V reached AIN1/BIN1 (max 5.5V). Replacement on order. Before installing: verify VM wire has no breadboard bridge to AIN1/BIN1.
+
+### Encoder → Arduino
+| Signal | Pin |
+|---|---|
+| Left A | D2 (INT0) |
+| Left B | D4 |
+| Right A | D3 (INT1) |
+| Right B | D12 |
+
+### Arduino Nano firmware
+- Firmware define: `TB6612_MOTOR_DRIVER`
+- Baud: `57600` | Flash tool: `arduino-cli` at `/home/ryan/bin/arduino-cli`
+- Board FQBN: `arduino:avr:nano:cpu=atmega328old`
+- Flash:
+  ```bash
+  fuser -k /dev/ttyUSB0 2>/dev/null
+  /home/ryan/bin/arduino-cli compile --fqbn arduino:avr:nano:cpu=atmega328old ~/mybot_ws/src/ros_arduino_bridge/ROSArduinoBridge
+  /home/ryan/bin/arduino-cli upload --fqbn arduino:avr:nano:cpu=atmega328old --port /dev/ttyUSB0 ~/mybot_ws/src/ros_arduino_bridge/ROSArduinoBridge
+  ```
+- Serial commands: `e` (encoders) | `r` (reset) | `o <PWM1> <PWM2>` (raw) | `m <S1> <S2>` (closed-loop)
+
+### ESP32-S3 pin mapping — Lonely Binary Expansion Base (`feature/esp32-microros`)
+⚠️ GPIO4/5/6/7 and GPIO25/26/27/32/33/34/35/36/43/44 are NOT broken out on the Lonely Binary board.
+
+Board left side: 3V3, GND, 15, 16, 17, 18, 8, 3, 46, 9, 10, 11, 12, 13, 14
+Board right side: 3V3, GND, 1, 2, 42, 41, 40, 39, 38, 37, 36, 35, 0, 45, 48, 47, 21, 20, 19
+
+| Function | GPIO | Board side |
+|---|---|---|
+| PWMA (RIGHT speed) | 10 | Left |
+| AIN1 | 11 | Left |
+| AIN2 | 12 | Left |
+| PWMB (LEFT speed) | 13 | Left |
+| BIN1 | 14 | Left |
+| BIN2 | 15 | Left |
+| BNO055 SDA / INA219 SDA | 8 | Left |
+| BNO055 SCL / INA219 SCL | 9 | Left |
+| Left enc A | 40 | Right |
+| Left enc B | 41 | Right |
+| Right enc A | 42 | Right |
+| Right enc B | 39 | Right |
+
+ESP32-S3 VCC → 3.3V (no level shifter needed for TB6612 at 3.3V logic).
+
+I2C bus (GPIO8/9): BNO055 @ 0x28, INA219 @ 0x40 — both confirmed on bench.
+
+### ESP32 micro-ROS topics (identical to Arduino stack)
+- Publishes: `/diff_cont/odom` (Odometry), `/imu/imu` (Imu)
+- Subscribes: `/diff_cont/cmd_vel_unstamped` (Twist)
+
+### RealSense D435
+- RSUSB backend (librealsense v2.56.4 built from source, `-DFORCE_RSUSB_BACKEND=ON`)
+- May need physical replug after Pi reboot to enumerate
+- Launch: `launch/camera.launch.py` — included in `launch_robot.launch.py`
+
+### ⚠️ credentials.h — never commit
+Gitignored. Create manually on every dev machine at `src/esp32_microros/**/credentials.h`:
+```cpp
+#pragma once
+#define WIFI_SSID     "FBI-Van"
+#define WIFI_PASSWORD "RachelRyan+2017"
+#define OTA_PASSWORD  "esp32ota"
 ```
 
-## Key Runtime Architecture
-```text
-Dev machine
-  ⇅ network
+### Windows ESP32 dev setup (one-time)
+1. **CH340 driver** — download from [wch-ic.com](https://www.wch-ic.com/downloads/CH341SER_EXE.html) and install. The Lonely Binary expansion base uses a CH340 chip (not CP2102).
+2. **Git for Windows** — from git-scm.com, all defaults
+3. **VS Code** — from code.visualstudio.com
+4. **PlatformIO IDE extension** — in VS Code Extensions sidebar, search "PlatformIO IDE", install
+5. **Clone repo:**
+   ```
+   git clone https://github.com/Dasovon/MyBot.git
+   cd MyBot
+   git checkout feature/esp32-microros
+   ```
+6. **Open sketch folder** in VS Code:
+   `File → Open Folder → MyBot\src\esp32_microros\test\test_bno055`
+7. **Create credentials.h** (gitignored — must create manually):
+   Create file at `src\credentials.h` with the block shown above.
+8. **First flash (USB):** PlatformIO sidebar → `esp32-s3` env → Upload
+   - If upload fails: hold BOOT button on ESP32, click Upload, release when "Connecting..." appears
+9. **All future flashes (OTA):** PlatformIO sidebar → `esp32-s3-ota` env → Upload
+   - Or from terminal: `pio run -e esp32-s3-ota --target upload`
+10. **Monitor wirelessly:** open terminal, run `nc esp32-mybot.local 23`
+    - On Windows use PuTTY (Raw mode, port 23) or install netcat via Git Bash
 
-Raspberry Pi
-  ├── ROS 2 Humble
-  ├── articubot_one launch files
-  ├── robot_state_publisher
-  ├── ros2_control_node
-  ├── diff_drive_controller
-  └── twist_mux
+---
 
-USB serial: /dev/ttyUSB0 @ 57600
+## Key Commands
 
-Arduino motor controller
-  ├── closed loop motor commands
-  └── encoder feedback
-
-Motor driver / drivetrain
-  └── differential drive base
-```
-
-## Dev / Pi Split Architecture
-```
-Pi (mybot, 192.168.86.33) — ~/mybot_ws
-  Runs: hardware drivers only
-  ├── robot_state_publisher
-  ├── ros2_control_node + diff_cont + joint_broad
-  ├── twist_mux
-  ├── rplidar_composition  (/dev/rplidar)
-  ├── bno055               (I2C bus 1, 0x28)
-  └── realsense2_camera_node (/camera/camera/*)
-
-Dev (192.168.86.52) — ~/dev_ws
-  Runs: computation + navigation
-  ├── ekf_filter_node      (fuses /diff_cont/odom + /imu/imu → /odom)
-  ├── map_server + amcl    (localization_launch.py)
-  ├── Nav2 stack           (navigation_launch.py)
-  ├── rviz2
-  └── future: OpenCV / object tracking
-```
-
-### Launch Sequence (full stack)
 ```bash
-# Pi
-ssh ryan@mybot "source ~/mybot_ws/install/setup.bash && ros2 launch articubot_one launch_robot.launch.py"
+# Source
+source /opt/ros/humble/setup.bash && source ~/mybot_ws/install/setup.bash
 
-# Dev — Terminal 1
-ros2 launch articubot_one dev_launch.py
+# Build
+colcon build --symlink-install
 
-# Dev — Terminal 2
-ros2 launch articubot_one localization_launch.py
+# Clean rebuild
+rm -rf build install log && colcon build --symlink-install
 
-# Dev — Terminal 3
-ros2 launch articubot_one navigation_launch.py
+# Launch robot (Pi alias — clears serial before launching)
+mybot-launch
 
-# Dev — Terminal 4
-rviz2
+# IMU
+sudo i2cdetect -y 1
+ros2 topic echo /imu/imu
+ros2 topic echo /imu/calib_status
+
+# Odometry
+ros2 topic echo /odom
+ros2 topic echo /diff_cont/odom
+
+# Serial
+ls /dev/ttyUSB*
+python3 -m serial.tools.miniterm /dev/ttyUSB0 57600
+
+# ESP32 test flash
+cd src/esp32_microros/test/<test_name>
+pio run --target upload           # USB (first time)
+pio run -e esp32-s3-ota --target upload  # OTA (all future)
+nc esp32-mybot.local 23           # wireless monitor
+
+# micro-ROS agent on Pi — ESP32-S3 connected via native USB (ttyACM0)
+source ~/microros_ws/install/setup.bash
+ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyACM0
 ```
 
-### Dev Workspace Setup
+### Dev workspace setup (one-time, on dev machine)
 ```bash
 mkdir -p ~/dev_ws/src && cd ~/dev_ws/src
 git clone git@github.com:Dasovon/MyBot.git articubot_one
@@ -217,192 +289,73 @@ echo "source ~/dev_ws/install/setup.bash" >> ~/.bashrc
 echo "export ROS_DOMAIN_ID=0" >> ~/.bashrc
 ```
 
-## Key Config Values
-From `src/articubot_one/description/ros2_control.xacro`:
-- hardware plugin: `diffdrive_arduino/DiffDriveArduinoHardware`
-- left wheel joint: `left_wheel_joint`
-- right wheel joint: `right_wheel_joint`
-- loop rate: `30`
-- serial device: `/dev/arduino` (udev symlink → ttyUSB0)
-- baud rate: `57600`
-- timeout: `1000 ms`
-- encoder counts per rev: `1010` (re-validated 2026-03-17 with corrected wheel_radius=0.034; 3 wall-guided runs avg 1011; actual gear ratio is 45:1 not 34:1 — Amazon listing RPM is inaccurate; formula: new = old × reported/actual)
-
-From `src/articubot_one/config/my_controllers.yaml`:
-- controller manager update rate: `30`
-- diff drive controller name: `diff_cont`
-- joint state broadcaster name: `joint_broad`
-- wheel separation: `0.179` (179mm center-to-center, measured 2026-03-16)
-- wheel radius: `0.034` (68mm diameter, new JGA25-371 motors — wider than CAD drawing)
-- `use_stamped_vel: false`
-- command remap target: `/diff_cont/cmd_vel_unstamped`
-- linear acceleration limit: `0.5 m/s²`
-- angular acceleration limit: `1.0 rad/s²`
-
-## Coding Conventions
-- ROS package build type is `ament_cmake`.
-- Launch and config layout follows standard ROS 2 package conventions.
-- Xacro and YAML define robot hardware behavior; do not move constants into random code paths.
-- Keep runtime names exact:
-  - controller names
-  - joint names
-  - plugin class names
-  - serial device path
-- Package is tutorial-derived and still contains template residue. Prefer surgical edits over broad cleanup.
-- Test/lint hooks exist but are minimal:
-  - `articubot_one` uses `ament_lint_auto` and `ament_lint_common`
-  - `serial` uses `ament_cmake_gtest`
-  - `diffdrive_arduino` uses `ament_cmake_gtest`
-- No evidence of strict TDD in active project workflow.
-- Naming style is ROS-standard snake_case for files, launch files, parameters, and controller names.
-
-## Critical Rules
-- Never use the old plugin string:
-  - wrong: `diffdrive_arduino/DiffDriveArduino`
-  - correct: `diffdrive_arduino/DiffDriveArduinoHardware`
-- Never mix incompatible repo states:
-  - `diffdrive_arduino` must stay on branch `humble`
-  - `serial` must stay on branch `newans_ros2`
-- Never assume `ros_arduino_bridge` is part of the active ROS 2 runtime path. It is kept in the workspace, but the working architecture is:
-  - `ros2_control -> diffdrive_arduino -> serial`
-- Never skip a true clean rebuild after changing plugin packages, branches, or manifests:
-  - `rm -rf build install log`
-- Never trust stale overlay paths in `AMENT_PREFIX_PATH` or `CMAKE_PREFIX_PATH`.
-- Never rename controller, joint, or plugin identifiers casually. ROS is extremely literal.
-- Never change serial device, baud, motor polarity, and encoder mapping all at once during debugging.
-- Never treat tutorial comments as truth. Verify against current files.
-
-## Preferred Workflow
-
-**Always work from dev (`dev`, 192.168.86.52, `~/dev_ws`).** Claude Code runs on dev and reaches the Pi via `ssh ryan@mybot "..."`. Never develop directly on the Pi.
-
-See `docs/workflow.md` for full launch sequence, emergency stop, and end-of-session routine.
+---
 
 ## End-of-Session Routine
 
-Claude must run this at the end of every session:
-
-1. **Stop ROS processes** on dev and Pi
-2. **Update `CLAUDE.md`** — current status, new fix history, next steps, tutorial progress
-3. **Update `docs/`** — if hardware or setup changed
-4. **Commit and push from dev:**
+1. Stop ROS processes on dev and Pi
+2. Update `CLAUDE.md` — current status, next steps, tutorial progress
+3. Update `docs/` — if hardware or setup changed
+4. Commit and push from dev:
    ```bash
    cd ~/dev_ws/src/articubot_one && git add -A && git commit -m "..." && git push
    ```
-5. **Sync Pi:**
+5. Sync Pi:
    ```bash
    ssh ryan@mybot "cd ~/mybot_ws/src/articubot_one && git pull"
    ```
-6. **Update memory files** at `/home/ryan/.claude/projects/-home-ryan-dev-ws/memory/`
-
-This applies even if the session ended without completing the task.
+6. Update memory files at `/home/ryan/.claude/projects/-home-ryan-dev-ws/memory/`
 
 ---
 
-## Current Status (2026-05-05)
-- **INA219 total-system current monitoring planned (2026-05-04):** ACEIRMC INA219 breakout to be wired in-series on battery+ before power rail splits. I2C addr 0x40 (A0+A1 floating), shared bus with BNO055 on GPIO21/22. Will publish `sensor_msgs/BatteryState` on `/battery_state` via micro-ROS. Adafruit INA219 library (Arduino). Shunt resistor: 0.1Ω onboard → ±3.2A range.
-- **Windows machine set up for ESP32 development (2026-04-27):** VS Code + PlatformIO + CP2102 driver + Git installed; repo cloned to `C:\Users\Ryan\MyBot`; branch `claude/fix-chat-broken-0rKIu` checked out
-- **test_bno055 sketch flashed successfully (2026-04-27):** ESP32 DevKitC V4 (WROOM-32D, CP2102) programmed via PlatformIO; had to hold BOOT button during upload (auto-reset not reliable); serial monitor not yet checked — BNO055 not wired yet
-- **Motor driver: Adafruit TB6612 replacement fully validated (2026-05-03, fix #20+21):**
-  - Both motors run in both directions, encoder signs correct
-  - Teleop confirmed: `i`=forward, `j`/`l`=turn
-  - Velocity limits: linear ±0.3 m/s, angular ±3.35 rad/s (matched to equal wheel speed)
-  - Tracking: 88–98% at operating speeds (50–100%), symmetric left/right within 0.002 m/s
-  - Low-speed deadband (25% = ~69–83%) is normal for DC motors at low PWM
-- Motors: DC12V 130RPM Amazon JGA25-371 encoder gear motors (actual ratio 45:1)
-- `enc_counts_per_rev = 1010` — re-validated 2026-03-17 with corrected wheel_radius=0.034 (3 wall-guided runs avg: 1006/1016/1012)
-- Both encoders confirmed positive for forward rotation — no inversion needed
-- URDF updated to actual robot dimensions (robot_core.xacro, lidar.xacro, my_controllers.yaml)
-- wheel_separation corrected from 0.297 → 0.179m (old value was wider than entire robot)
-- wheel_radius corrected from 0.0325 → 0.034m (measured 68mm, datasheet says 65mm)
-- RPLidar A1 M8 installed and scanning — ros-humble-rplidar-ros installed, /dev/rplidar udev symlink active
-- Robot model orientation fixed — chassis was rendered backwards; fixed with 180° chassis_joint rotation
-- face.xacro disabled — tutorial-era visual removed
-- Dev machine (192.168.86.52) communicates with Pi (192.168.86.33) via ROS 2 DDS on `ROS_DOMAIN_ID=0`
-- SLAM complete — new map made 2026-03-21, saved to `~/mybot_ws/maps/my_map` (.pgm + .yaml), 113x140 @ 0.05m/pix; see fix #16 for SLAM drift tuning
-- BNO055 IMU fully integrated (2026-03-18) — ros-humble-bno055 installed, I2C bus 1, address 0x28, publishing /imu/imu
-- robot_localization EKF running — fuses /diff_cont/odom + /imu/imu → /odom at 20Hz
-- imu_link added to URDF at xyz="0.004 -0.018 0.055" (80mm from front, 50mm from right edge, upper deck)
-- Nav2 launch files and params updated to Humble-compatible API (2026-03-20) — see fix #15
-- Nav2 working end-to-end (2026-03-21) — robot navigates autonomously to goals; see fix #17 for velocity increase
-- RealSense D435 fully integrated (2026-03-21) — librealsense v2.56.4 built from source with FORCE_RSUSB_BACKEND=ON; apt .so replaced with RSUSB build; both depth and color streams at 15 FPS (fix #18 complete)
-- Next steps: Object Tracking with OpenCV (final tutorial chapter)
+## Tutorial Progress
+Following: https://articulatedrobotics.xyz/category/build-a-mobile-robot-with-ros
 
-### Previous validated state (2026-03-13)
-- All 7 differential drive validation checkpoints passed with old E-S Motor 34:1 units
-- Teleop working via `ros2 run teleop_twist_keyboard teleop_twist_keyboard`
-
-## Exact Fix History That Matters
-
-### 24) RealSense D435 camera images reaching dev machine (2026-05-05)
-
-**Problem:** Camera node crashed immediately with `No intrinsics available` / `set_xu(ctrl=1) failed! Numerical argument out of domain` after any kill-9 restart. Images not visible on dev machine even when camera was running.
-
-**Root causes (three separate issues, all fixed):**
-1. **XU endpoint stall**: After kill-9, the camera's UVC extension unit control endpoint gets stuck (EAGAIN = resource busy). Neither sysfs unbind/bind, nor uhubctl power cycle, nor `initial_reset: true` reliably cleared it. **Fix:** USB authorization reset (deauth → reauth forces USB port reset which clears endpoint state on the firmware side).
-2. **USB 2.0 bandwidth**: When uhubctl power-cycles the USB 3.0 hub port, the camera re-enumerates on the USB 2.0 companion path (~480 Mbps). Depth + Color + IR1 + IR2 streams exceed USB 2.0 bandwidth. **Fix:** Disabled IR streams (`enable_infra1: false`, `enable_infra2: false`) — not needed for object tracking.
-3. **DDS QoS mismatch**: Camera publisher used TRANSIENT_LOCAL durability; dev machine subscribers use VOLATILE → incompatible, no images cross network. **Fix:** QoS override to VOLATILE on both color and depth topics.
-4. **`initial_reset: true`**: Caused a soft firmware reset mid-node-startup (re-enumeration to different port) that left the color sensor in a bad intrinsics state. **Fix:** Removed.
-
-**Files changed:**
-- `launch/camera.launch.py`:
-  - Removed `initial_reset: true`
-  - Added `enable_infra1: false`, `enable_infra2: false`
-  - Added QoS volatile overrides for color and depth topics
-- `~/reset_realsense.sh` (Pi, not in git):
-  - Rewrote to use authorization reset (dynamic device path discovery by vendor/product ID)
-  - Removes sysfs unbind/bind and uhubctl — those caused USB path changes
-- `/etc/sudoers.d/uhubctl` (Pi, not in git):
-  - Added `NOPASSWD: /usr/bin/tee /sys/bus/usb/devices/*/authorized`
-
-**⚠️ CRITICAL: Do NOT use `sudo uhubctl -l 2 -p 2 -a off`** — this causes the camera to fall from USB 3.0 (Hub 2, 5Gbps) to USB 2.0 (hub 1-1, 480Mbps) and it will not return to USB 3.0 without a Pi reboot.
-
-**Reset script (`~/reset_realsense.sh`):**
-```bash
-#!/bin/bash
-# Fixes RSUSB symlink, then auth-resets D435 to clear endpoint stalls
-RSUSB_LIB=/opt/ros/humble/lib/aarch64-linux-gnu/librealsense2.so.2.56
-TARGET=librealsense2.so.2.56.4
-if [ "$(readlink $RSUSB_LIB)" != "$TARGET" ]; then sudo ln -sf $TARGET $RSUSB_LIB; fi
-DEVICE_PATH=""
-for dev in /sys/bus/usb/devices/*/; do
-    if [ "$(cat ${dev}idVendor 2>/dev/null)" = "8086" ] && \
-       [ "$(cat ${dev}idProduct 2>/dev/null)" = "0b07" ]; then
-        DEVICE_PATH="${dev}"; break
-    fi
-done
-if [ -z "$DEVICE_PATH" ]; then echo "D435 not found"; exit 0; fi
-echo "Auth-resetting D435 at $(basename $DEVICE_PATH)"
-echo 0 | sudo tee ${DEVICE_PATH}authorized > /dev/null
-sleep 3
-echo 1 | sudo tee ${DEVICE_PATH}authorized > /dev/null
-# Wait for re-enumeration (up to 10s)
-for i in $(seq 1 20); do
-    sleep 0.5; if lsusb | grep -q '8086:0b07'; then echo "Online after ${i}x0.5s"; break; fi
-done
-sleep 2; echo "Done"
+```
+├── URDF + Gazebo Simulation          ✅
+├── Hardware (Pi, Power, Lidar)       ✅
+├── Adding a Camera (RealSense D435)  ✅ RSUSB backend, 15fps
+├── ros2_control (sim + real)         ✅ full validation 2026-03-13
+├── Teleoperation                     ✅ (Arduino stack + ESP32 stack both validated)
+├── SLAM with slam_toolbox            ✅ map saved 2026-03-21
+├── Navigation with Nav2              ✅ autonomous goals working
+├── ESP32-S3 micro-ROS migration      ✅ full stack driving 2026-05-10
+└── Object Tracking with OpenCV       ⬜ pending
 ```
 
-**Confirmed result:**
-- Color: ~12 fps on Pi, ~7 fps on dev machine (USB 2.0 limit; will be ~15fps after Pi reboot restores USB 3.0)
-- Depth: ~15 fps on Pi, ~11 fps on dev machine
-- Launch sequence: `reset_realsense.sh` runs first, camera node starts 20s later (delay is in `launch_robot.launch.py`)
+---
 
-**To view images on dev machine:**
-- `rviz2` → Add → Image → Topic: `/camera/camera/color/image_raw` (Durability: Volatile)
-- or: `ros2 topic hz /camera/camera/color/image_raw` to verify rate
+## Physical Dimensions (URDF reference)
+- `wheel_radius`: 0.034m | `wheel_separation`: 0.179m
+- `wheel_offset_x`: 0.1565 | `wheel_offset_y`: 0.0895 | `wheel_offset_z`: -0.010
+- `caster_wheel_offset_x`: 0.033
+- Lidar xyz in chassis frame: `0.200, 0, 0.116`
+- **Front** = drive wheel side (curved bumper) | **Back** = caster side
+
+---
+
+## Docs to Maintain
+- `docs/pin-mapping.md` | `docs/wire-colors.md` | `docs/workflow.md`
+- `docs/hardware-block-diagram.md` | `docs/known-good-wiring.md`
+
+---
+
+## References
+- Upstream robot package: `https://github.com/joshnewans/articubot_one`
+- `https://github.com/joshnewans/diffdrive_arduino` | `https://github.com/joshnewans/serial`
+- Tutorial video: `https://youtu.be/J02jEKawE5U`
+- ros2_control demo: `https://github.com/ros-controls/ros2_control_demos/tree/master/example_2`
+
+---
+
+## Exact Fix History
 
 ### 1) Hardware plugin class fix
-File:
-`src/articubot_one/description/ros2_control.xacro`
-
-Old:
+File: `src/articubot_one/description/ros2_control.xacro`
 ```xml
+<!-- old -->
 <plugin>diffdrive_arduino/DiffDriveArduino</plugin>
-```
-
-New:
-```xml
+<!-- new -->
 <plugin>diffdrive_arduino/DiffDriveArduinoHardware</plugin>
 ```
 
@@ -415,330 +368,7 @@ git clone -b newans_ros2 https://github.com/joshnewans/serial.git
 ```
 
 ### 3) Stop using `ros_arduino_bridge`
-Reason:
-- ROS1-era design
-- not needed for working ROS 2 Humble hardware path
-- replaced by `ros2_control -> diffdrive_arduino -> serial`
-
-### 7) Encoder count and direction fixes (2026-03-13)
-Files changed:
-- `src/articubot_one/description/ros2_control.xacro` — `enc_counts_per_rev` corrected from 3436 to 748
-  - Motor: E-S Motor 25SG-370CA-34-EN, 11 PPR encoder, 34:1 gear ratio
-  - Firmware uses 2x quadrature → 11 × 2 × 34 = 748 counts/rev (verified by hand-rotation)
-- `src/ros_arduino_bridge/ROSArduinoBridge/encoder_driver.ino` — right encoder ISR direction inverted
-  - Was: `if (A == B) pos++` → right wheel counted negative for forward rotation
-  - Fixed: `if (A != B) pos++` → both wheels now count positive for forward rotation
-  - Reflashed Arduino after fix
-
-### 19) Motor driver swap: L298N → Adafruit TB6612 (2026-04-25, chip damaged — replacement needed)
-Files changed:
-- `src/ros_arduino_bridge/ROSArduinoBridge/motor_driver.h` — added `TB6612_MOTOR_DRIVER` ifdef block with corrected pin mapping (motors/directions were swapped from initial attempt)
-- `src/ros_arduino_bridge/ROSArduinoBridge/motor_driver.ino` — added TB6612 `initMotorController()` and `setMotorSpeed()`
-- `src/ros_arduino_bridge/ROSArduinoBridge/ROSArduinoBridge.ino` — changed `#define L298_MOTOR_DRIVER` → `#define TB6612_MOTOR_DRIVER`
-
-Firmware pin mapping (motor_driver.h TB6612_MOTOR_DRIVER block):
-```
-LEFT_MOTOR_ENABLE   = 10  // PWMB
-LEFT_MOTOR_FORWARD  = 9   // BIN2
-LEFT_MOTOR_BACKWARD = 8   // BIN1
-RIGHT_MOTOR_ENABLE  = 5   // PWMA
-RIGHT_MOTOR_FORWARD = 6   // AIN2
-RIGHT_MOTOR_BACKWARD = 7  // AIN1
-```
-Validated via encoder tests: LEFT forward (CCW, BIN2=HIGH) → left encoder +. RIGHT forward direction (AIN1=HIGH) untested — chip failed before right CW could be confirmed.
-- STBY not wired — Adafruit breakout has onboard pullup (defaults HIGH)
-
-Diagnosis: first TB6612 unit damaged by 12V motor supply reaching AIN1 and BIN1 logic input pins.
-- Max logic input voltage: VCC + 0.5V = 5.5V. 12V destroyed the xIN1 input gates.
-- Symptom: xIN1 pins pulled to ~2V when Arduino drives HIGH (below 3.5V logic threshold) → CW direction non-functional.
-- xIN2 pins unaffected (CCW direction worked correctly).
-- Confirmed via multimeter: BIN1 read 11.9V with motor supply connected, 2V without.
-
-**Before installing replacement chip:** verify VM wire has no breadboard bridge to AIN1 or BIN1.
-
-Note: `src/ros_arduino_bridge/` on the Pi is a separate repo from `src/articubot_one/`. Firmware edits live in `articubot_one/src/ros_arduino_bridge/` (git-tracked) and must be SCP'd to Pi's `~/mybot_ws/src/ros_arduino_bridge/` before flashing.
-
-### 20) TB6612 replacement — motor wiring fix + encoder direction fix (2026-05-03)
-Root cause: motor output wires were placed with one wire on a motor output pad (AO2 or BO2) and the other on the GND pad between MOTORA/MOTORB sections, instead of both wires on the correct MOTORA (AO1+AO2) or MOTORB (BO1+BO2) pads. This caused 0V differential in one direction (both pads = GND) and 12V in the other (output pad = VM, GND pad = GND).
-
-Fix: moved both motor wire pairs to correct pads — right motor to AO1+AO2, left motor to BO1+BO2.
-
-Also reverted right motor Arduino pins from debug-test positions (D11/A0/A1) back to original:
-```
-RIGHT_MOTOR_ENABLE  = 5   // PWMA
-RIGHT_MOTOR_FORWARD = 7   // AIN1
-RIGHT_MOTOR_BACKWARD = 6  // AIN2
-```
-
-Left motor direction and encoder ISR tuned through two rounds of testing:
-1. First flash: encoder ISR changed to `A!=B` — encoder counts positive for forward, but left motor physically ran backward
-2. Teleop test: `i` caused rotation (left wheel backward, right forward) → left motor inverted
-3. Fix: swapped LEFT_MOTOR_FORWARD/BACKWARD (BIN2↔BIN1), reverted encoder ISR back to `A==B`
-
-Final validated firmware (motor_driver.h):
-```
-LEFT_MOTOR_FORWARD  = 8   // BIN1
-LEFT_MOTOR_BACKWARD = 9   // BIN2
-```
-Final encoder ISR (encoder_driver.ino): `if (A == B) left_enc_pos++`
-
-Teleop validated: `i` drives forward, `j`/`l` turn correctly.
-
-### 21) Velocity limits tuned + spinning validated (2026-05-03)
-Files changed:
-- `src/articubot_one/config/my_controllers.yaml` — linear max 0.5→0.3 m/s, angular max 1.0→3.35 rad/s
-- `src/articubot_one/config/nav2_params.yaml` — DWB and velocity_smoother limits matched
-
-Formula: `angular_max = 2 × linear_max / wheel_separation = 2 × 0.3 / 0.179 = 3.35 rad/s`
-This ensures full-speed spinning uses the same wheel velocity as full-speed straight driving.
-
-Validated with automated wheel velocity test (3 consistent runs, robot free to move on floor):
-  Speed   Forward  Spin
-  25%     83%      69%   ← motor deadband at low PWM, normal for DC motors
-  50%     92%      88%
-  75%     97%      93%
-  100%    98%      96%
-Left/right wheels symmetric within 0.002 m/s across all steps.
-
-Note: holding the robot body while spinning creates lateral tire scrub → hard plateau at ~0.085 m/s.
-This is NOT a firmware/hardware limit — robot must be free to rotate for normal behavior.
-
-### 23) BNO055 IMU axis validation + circle test (2026-05-03)
-Combined motor + IMU test (imu_motor_test.py) ran the same velocity sequence as wheel_vel_test.py while recording all 6 IMU axes. Circle test (circle_test.py) drove a clockwise 2.5 ft (0.762 m) diameter circle and measured closure error.
-
-**IMU axis results:**
-- Forward motion (FWD_100): linear acceleration dominant on **x-axis** (positive = forward). z ≈ -9.8 m/s² (gravity).
-- Clockwise spin (SPIN_100): angular velocity dominant on **z-axis** (negative = clockwise). x ≈ 0, y ≈ 0.
-- IMU x = robot forward, IMU z = robot yaw axis. Axes correct — placement_axis_remap P1 confirmed, no changes needed.
-
-**Circle test results (clockwise, open-loop):**
-- Command: linear = 0.20 m/s, angular = -0.525 rad/s (= 0.20 / 0.381)
-- Duration: 11.97 s (circumference 2.394 m)
-- IMU gyro z average: **-0.494 rad/s** (clockwise = negative, as expected)
-- IMU/cmd ratio: **0.94** (consistent with 94–98% velocity tracking seen in wheel tests)
-- IMU yaw delta: ≈ -339° (gyro integral: -0.494 × 11.97 = -5.91 rad) — confirms ~6% angular undershoot
-- Closure error: **24.6 cm** — expected for open-loop with ~6% angular undershoot
-- Odometry and IMU readings fully consistent with each other
-
-Simple `yaw_end - yaw_start` wraps at ±180° for a full circle — gyro integral is the reliable metric.
-
-### 22) Windows machine setup + test_bno055 sketch (2026-04-27)
-Goal: flash a minimal BNO055 I2C test to ESP32 DevKitC V4 from Windows machine before wiring full hardware.
-
-Windows setup steps:
-1. CP210x Universal Windows Driver — from silabs.com, installed via `silabser.inf` right-click → Install
-2. Git for Windows — from git-scm.com, all defaults
-3. Repo cloned: `https://github.com/Dasovon/MyBot.git` → `C:\Users\Ryan\MyBot`
-4. Branch: `git checkout claude/fix-chat-broken-0rKIu`
-5. PlatformIO IDE extension installed in VS Code
-6. Opened folder: `C:\Users\Ryan\MyBot\src\esp32_microros\test\test_bno055`
-7. Upload — first attempt failed: "Wrong boot mode detected (0x13)". Fix: hold BOOT button on ESP32, click Upload, release BOOT when "Connecting......" appears
-8. Upload successful
-
-Files added:
-- `src/esp32_microros/test/test_bno055/platformio.ini` — ESP32dev, Arduino framework, Adafruit BNO055 lib only (no micro-ROS)
-- `src/esp32_microros/test/test_bno055/src/main.cpp` — prints euler angles + calibration status at 2Hz; prints error + retries if BNO055 not found on I2C
-
-ESP32 board details: DevKitC V4, WROOM-32D module, CP2102 USB chip
-Expected serial output (115200 baud) when BNO055 not wired: `[!!] BNO055 not found on I2C bus`
-Expected output when wired correctly: `Heading: ... Roll: ... Pitch: ... | Calib sys=X gyro=X accel=X mag=X`
-
-BNO055 wiring for ESP32:
-- SDA → GPIO21
-- SCL → GPIO22
-- VIN → 3.3V
-- GND → GND
-
-### 18) RealSense D435 — librealsense source build with FORCE_RSUSB_BACKEND (2026-03-21, COMPLETE)
-Problem: apt-installed `ros-humble-librealsense2` compiled against kernel V4L2/UVC driver. On Pi, UVC extension unit queries (`xioctl(UVCIOC_CTRL_QUERY)`) time out, preventing RGB camera from retrieving intrinsics. Depth stream works; color stream fails with "No intrinsics available".
-
-Solution: Build librealsense **v2.56.4** from source with `-DFORCE_RSUSB_BACKEND=ON` (uses libusb directly, bypasses kernel UVC driver). Must use v2.56.4 to match the SONAME that `ros-humble-realsense2-camera` links against (`librealsense2.so.2.56`).
-
-Steps executed:
-1. `sudo apt remove ros-humble-librealsense2*`
-2. `sudo apt install libusb-1.0-0-dev libssl-dev cmake libgtk-3-dev`
-3. `git clone https://github.com/IntelRealSense/librealsense ~/librealsense && cd ~/librealsense && git checkout v2.56.4`
-4. `mkdir build && cd build && cmake .. -DFORCE_RSUSB_BACKEND=ON -DBUILD_EXAMPLES=OFF -DBUILD_GRAPHICAL_EXAMPLES=OFF -DCMAKE_BUILD_TYPE=Release`
-5. `make -j2 && sudo make install && sudo ldconfig` (use -j2 not -j4 — Pi OOMs with -j4)
-6. `sudo apt install ros-humble-realsense2-camera ros-humble-realsense2-description` (reinstalls apt v2.56.4 to /opt/ros)
-7. **Key step:** Replace the apt library with our RSUSB build (same version/SONAME, safe):
-   `sudo cp /usr/local/lib/librealsense2.so.2.56.4 /opt/ros/humble/lib/aarch64-linux-gnu/librealsense2.so.2.56.4`
-   (Backup saved at `.so.2.56.4.bak`)
-8. Udev rules: `99-realsense-libusb.rules` already installed, `0b07` entry present. `sudo udevadm control --reload-rules && sudo udevadm trigger`
-
-Result: Both depth and color streams running at 15 FPS. Topics: `/camera/camera/color/image_raw`, `/camera/camera/depth/image_rect_raw`.
-
-Key lessons:
-- `LD_LIBRARY_PATH` tricks don't work — ROS setup.bash prepends `/opt/ros/humble/lib/aarch64-linux-gnu` which overrides ldconfig
-- Must match SONAME: apt camera plugin requires `librealsense2.so.2.56` specifically
-- Build at v2.56.4 to match apt camera plugin, not latest (v2.57+)
-- RSUSB backend confirmed via `messenger-libusb.cpp` in log (no more `UVCIOC_CTRL_QUERY` errors)
-- D435 must be physically replugged after Pi reboot — doesn't always re-enumerate automatically
-
-### 17) Nav2 velocity limits increased (2026-03-21)
-File changed:
-- `src/articubot_one/config/nav2_params.yaml` — raised max velocity from TurtleBot3 default 0.26 m/s to 0.4 m/s
-
-Changes:
-- DWB planner: `max_vel_x: 0.26` → `0.4`, `max_speed_xy: 0.26` → `0.4`
-- velocity_smoother: `max_velocity: [0.26, 0.0, 1.0]` → `[0.4, 0.0, 1.0]`, `min_velocity: [-0.26, 0.0, -1.0]` → `[-0.4, 0.0, -1.0]`
-
-Reason: robot was struggling to move at 0.26 m/s — not enough torque to overcome static friction consistently. diff_drive_controller already allows 0.5 m/s; 0.4 gives headroom below that limit.
-
-### 16) SLAM drift tuning (2026-03-21)
-File changed:
-- `src/articubot_one/config/mapper_params_online_async.yaml`
-
-Changes:
-- `minimum_time_interval: 0.5` → `0.3` (more frequent scan matching — was missing too much motion between scans)
-- `link_match_minimum_response_fine: 0.1` → `0.3` (reject weaker/ambiguous scan matches)
-- `loop_match_minimum_chain_size: 10` → `5` (loop closure kicks in sooner — needed for small rooms)
-
-Result: map drift reduced; new map saved 2026-03-21 at 113x140 @ 0.05m/pix.
-
-### 15) Nav2 launch files and params updated to Humble API (2026-03-20)
-Files changed:
-- `src/articubot_one/launch/navigation_launch.py` — rewritten to Humble nav2_bringup style: `recoveries_server` → `behavior_server`, added `smoother_server` and `velocity_smoother` to lifecycle nodes, uses `ParameterFile` wrapper
-- `src/articubot_one/launch/localization_launch.py` — rewritten to Humble nav2_bringup style: uses `ParameterFile` wrapper, default map path set to `~/mybot_ws/maps/my_map.yaml`
-- `src/articubot_one/config/nav2_params.yaml` — fully replaced with Humble-compatible params:
-  - `use_sim_time: False` everywhere
-  - `robot_model_type: "nav2_amcl::DifferentialMotionModel"` (old `"differential"` deprecated)
-  - `robot_radius: 0.17` (our robot ~156mm circumscribed radius, was 0.22 for TurtleBot3)
-  - `inflation_radius: 0.35` (reduced from 0.55, fits smaller robot in small rooms)
-  - `laser_max_range: 12.0` (RPLidar A1 M8 spec)
-  - `recoveries_server` block replaced with `behavior_server` block (nav2_behaviors/*)
-  - Added `smoother_server`, `waypoint_follower`, `velocity_smoother` sections
-  - Updated bt_navigator plugin list to full Humble set
-
-Nav2 launch sequence:
-1. Pi Terminal 1: `mybot-launch`
-2. Pi Terminal 2: `source ~/mybot_ws/install/setup.bash && ros2 launch articubot_one localization_launch.py`
-3. Pi Terminal 3: `source ~/mybot_ws/install/setup.bash && ros2 launch articubot_one navigation_launch.py`
-4. Dev machine: `rviz2` — Fixed Frame: `map`, add Map `/map`, LaserScan `/scan`, RobotModel `/robot_description`
-5. Use **2D Pose Estimate** tool to initialize AMCL (click robot location + drag heading)
-6. Use **Nav2 Goal** (or Nav2 Goal Pose) to send navigation target
-
-Key notes:
-- Localization MUST be running before RViz `map` frame exists
-- AMCL will not publish transform until initial pose is set via 2D Pose Estimate
-- velocity_smoother remaps internally: nav `cmd_vel_nav` → smoothed → `/cmd_vel` → twist_mux → `/diff_cont/cmd_vel_unstamped`
-- Nav2 confirmed receiving all topics from Pi on dev machine (ros2 topic list verified)
-
-### 14) BNO055 IMU + robot_localization EKF integrated (2026-03-18)
-Packages installed:
-- `ros-humble-bno055` — I2C IMU driver
-- `ros-humble-robot-localization` — EKF sensor fusion
-
-Files changed:
-- `src/articubot_one/description/robot_core.xacro` — added `imu_link` at xyz="0.004 -0.018 0.055" (80mm from front edge, 50mm from right edge, upper deck)
-- `src/articubot_one/config/bno055_params.yaml` — new: I2C bus 1, addr 0x28, topic prefix `imu/`, frame_id `imu_link`, NDOF mode
-- `src/articubot_one/config/ekf.yaml` — new: fuses /diff_cont/odom + /imu/imu → /odom at 20Hz, two_d_mode true
-- `src/articubot_one/launch/launch_robot.launch.py` — added bno055 and ekf_node; removed old `/diff_cont/odom → /odom` remap (EKF now owns /odom); added `/odometry/filtered → /odom` remap on EKF node
-
-Key notes:
-- BNO055 uses I2C not UART — must set `connection_type: i2c` and `i2c_bus: 1` in config
-- EKF IMU config: orientation disabled (magnetometer unreliable on metal robot), angular velocity + linear accel enabled
-- EKF frequency lowered to 20Hz to avoid overload warnings on Pi
-- i2c-tools installed for diagnostics: `sudo i2cdetect -y 1` confirms BNO055 at 0x28
-
-### 13) SLAM with slam_toolbox configured and confirmed working (2026-03-18)
-Files changed:
-- `src/articubot_one/launch/online_async_launch.py` — `use_sim_time` default changed `true` → `false` (real robot)
-- `src/articubot_one/config/mapper_params_online_async.yaml` — `mode: localization` → `mode: mapping`; placeholder `map_file_name` commented out; `max_laser_range: 20.0` → `12.0` (RPLidar A1 M8 spec); `minimum_travel_distance` and `minimum_travel_heading` lowered from `0.5` → `0.2` (reduces drift in small rooms)
-
-Launch sequence:
-1. Pi Terminal 1: `mybot-launch`
-2. Pi Terminal 2: `source ~/mybot_ws/install/setup.bash && ros2 launch articubot_one online_async_launch.py`
-3. Dev machine: `rviz2` — add Map `/map`, LaserScan `/scan`, set Fixed Frame to `map`
-4. Drive with teleop to build map
-5. Save map: `ros2 run nav2_map_server map_saver_cli -f ~/mybot_ws/maps/my_map`
-
-Key notes:
-- Must `source ~/mybot_ws/install/setup.bash` on Pi before launching — Pi also has `robot_ws` which does not have articubot_one
-- slam_toolbox is passive — robot must be driven manually with teleop
-- BNO055 IMU on hand; plan to integrate with `robot_localization` EKF after map is complete
-
-### 12) RPLidar A1 M8 installed and robot model orientation fixed (2026-03-17)
-Files changed:
-- `/etc/udev/rules.d/99-mybot.rules` — udev symlinks: `/dev/arduino` (CH340, 1a86:7523) and `/dev/rplidar` (CP2102, 10c4:ea60)
-- `src/articubot_one/description/ros2_control.xacro` — device changed from `/dev/ttyUSB0` to `/dev/arduino`
-- `src/articubot_one/launch/rplidar.launch.py` — serial_port `/dev/rplidar`, serial_baudrate 115200 added
-- `src/articubot_one/launch/launch_robot.launch.py` — rplidar.launch.py included in main launch
-- `src/articubot_one/description/robot.urdf.xacro` — face.xacro disabled
-- `src/articubot_one/description/robot_core.xacro` — chassis_joint rpy="0 0 pi" added; chassis_joint x changed to `chassis_length - wheel_offset_x`; caster_wheel_offset_x 0.033 → 0.207
-- `src/articubot_one/description/lidar.xacro` — origin x 0.200 → 0.040 (40mm from front in flipped chassis frame)
-- `~/.bashrc` — `mybot-launch` alias added (clears serial ports before launching)
-- `/etc/sudoers.d/ryan-nopasswd` — passwordless sudo for ryan
-
-Key issues resolved:
-- rplidar failed with timeout until `serial_baudrate: 115200` was added explicitly
-- Stale serial port processes cause crash on restart — use `sudo fuser -k /dev/arduino /dev/rplidar` before launching (or `mybot-launch` alias)
-- Robot model was rendered 180° backwards — chassis was oriented with caster side as positive x. Fixed by adding rpy="0 0 pi" to chassis_joint and recalculating caster and lidar offsets
-
-### 11) URDF updated to actual robot dimensions (2026-03-16)
-All dimensions measured from physical robot and CAD renders in `Hardware/mybot/`.
-Files changed:
-- `src/articubot_one/description/robot_core.xacro` — chassis, wheel, and caster dimensions updated to actual measurements
-- `src/articubot_one/description/lidar.xacro` — laser_frame xyz updated to actual lidar position
-- `src/articubot_one/config/my_controllers.yaml` — wheel_separation and wheel_radius corrected
-
-Key corrections:
-- `wheel_separation`: 0.297 → 0.179 (old value was physically impossible — wider than robot)
-- `wheel_radius`: 0.0325 → 0.034 (measured 68mm diameter; datasheet says 65mm)
-- `chassis_length`: 0.335 → 0.240
-- `chassis_width`: 0.265 → 0.1355
-- `wheel_offset_y`: 0.1485 → 0.0895
-- `caster_wheel_offset_x`: 0.075 → 0.033
-- lidar xyz: `0.122, 0, 0.212` → `0.200, 0, 0.116`
-
-Note: `enc_counts_per_rev` re-validated 2026-03-17 → updated to 1010 (3 wall-guided runs, avg 1011).
-
-### 10) Motor swap and encoder recalibration (2026-03-16)
-Motors replaced with: DC12V 130RPM encoder gear motors (Amazon B07X7M1LLQ)
-- JGA25-371, actual gear ratio 45:1 (Amazon listing says 34:1 — inaccurate)
-- 11 PPR encoder on motor shaft
-- Encoder voltage: 3.3–5V
-- Wire colors updated (see Hardware / Wiring Notes)
-Files changed:
-- `src/articubot_one/description/ros2_control.xacro` — `enc_counts_per_rev` updated to 990 (validated via odometry 2026-03-16; correction formula: new = old × reported/actual), then re-validated 2026-03-17 → 1010 (3 wall-guided runs with corrected wheel_radius=0.034)
-
-### 8) Kinematics and controller config fixes (2026-03-13)
-Files changed:
-- `src/articubot_one/config/my_controllers.yaml` — wheel_radius corrected from 0.033 to 0.0325 (65mm wheel diameter confirmed from datasheet); acceleration limits added (0.5 m/s², 1.0 rad/s²) to smooth teleop motion
-- `src/articubot_one/launch/launch_robot.launch.py` — remapped `/diff_cont/odom` to `/odom` on controller_manager node for Nav2 compatibility
-
-### 9) PID tuning validation (2026-03-13)
-Tested via serial with custom tuning script. Firmware defaults confirmed optimal:
-- Kp=20, Kd=12, Ki=0, Ko=50
-- Settles to target in ~3s from cold start with zero steady-state error
-- No firmware changes needed — defaults are correct
-
-### 5) Arduino firmware rewrite for correct L298N wiring
-Files changed in `src/ros_arduino_bridge/ROSArduinoBridge/`:
-- `motor_driver.h` — updated pin defines to match actual wiring, swapped IN1↔IN2 and IN3↔IN4 to fix reversed direction
-- `motor_driver.ino` — rewrote `initMotorController()` and `setMotorSpeed()` to use PWM on ENA/ENB and digitalWrite on IN pins
-- `encoder_driver.h` — updated encoder pin defines (Left: D2+D4, Right: D3+D12)
-- `encoder_driver.ino` — replaced AVR PCINT register code with `attachInterrupt` (D3/D12 are on different AVR ports, PCINT grouping can't handle them together)
-- `ROSArduinoBridge.ino` — replaced PCINT setup block with `pinMode INPUT_PULLUP` + `attachInterrupt`
-
-Flash tool: `arduino-cli` installed at `/home/ryan/bin/arduino-cli`
-Board FQBN: `arduino:avr:nano:cpu=atmega328old`
-Flash command:
-```bash
-fuser -k /dev/ttyUSB0 2>/dev/null
-/home/ryan/bin/arduino-cli compile --fqbn arduino:avr:nano:cpu=atmega328old ~/mybot_ws/src/ros_arduino_bridge/ROSArduinoBridge
-/home/ryan/bin/arduino-cli upload --fqbn arduino:avr:nano:cpu=atmega328old --port /dev/ttyUSB0 ~/mybot_ws/src/ros_arduino_bridge/ROSArduinoBridge
-```
-
-### 6) Fixed `launch_robot.launch.py` robot_description lookup
-Old line 49 queried a running node before it existed:
-```python
-robot_description = Command(['ros2 param get --hide-type /robot_state_publisher robot_description'])
-```
-Fixed to use xacro directly:
-```python
-robot_description = Command(['xacro ', os.path.join(get_package_share_directory(package_name), 'description', 'robot.urdf.xacro'), ' use_ros2_control:=true sim_mode:=false'])
-```
+ROS1-era design, replaced by `ros2_control → diffdrive_arduino → serial`.
 
 ### 4) True clean rebuild
 ```bash
@@ -749,238 +379,213 @@ rosdep install --from-paths src --ignore-src -r -y
 colcon build --symlink-install
 ```
 
-## Key Commands
-### Source environment
+### 5) Arduino firmware rewrite for correct L298N wiring
+Files changed in `src/ros_arduino_bridge/ROSArduinoBridge/`:
+- `motor_driver.h` — updated pin defines, swapped IN1↔IN2 and IN3↔IN4 to fix reversed direction
+- `motor_driver.ino` — rewrote `initMotorController()` and `setMotorSpeed()` using PWM on ENA/ENB and digitalWrite on IN pins
+- `encoder_driver.h` — updated encoder pin defines (Left: D2+D4, Right: D3+D12)
+- `encoder_driver.ino` — replaced AVR PCINT register code with `attachInterrupt`
+- `ROSArduinoBridge.ino` — replaced PCINT setup with `pinMode INPUT_PULLUP` + `attachInterrupt`
+
+### 6) Fixed `launch_robot.launch.py` robot_description lookup
+Old: queried a running node before it existed:
+```python
+robot_description = Command(['ros2 param get --hide-type /robot_state_publisher robot_description'])
+```
+Fixed: use xacro directly:
+```python
+robot_description = Command(['xacro ', os.path.join(get_package_share_directory(package_name), 'description', 'robot.urdf.xacro'), ' use_ros2_control:=true sim_mode:=false'])
+```
+
+### 7) Encoder count and direction fixes (2026-03-13)
+- `ros2_control.xacro` — `enc_counts_per_rev` corrected from 3436 to 748 (E-S Motor, 11 PPR, 34:1, 2x quadrature)
+- `encoder_driver.ino` — right encoder ISR inverted: `if (A == B)` → `if (A != B)` so both wheels count positive for forward
+
+### 8) Kinematics and controller config fixes (2026-03-13)
+- `my_controllers.yaml` — `wheel_radius` corrected 0.033 → 0.0325; acceleration limits added (0.5 m/s², 1.0 rad/s²)
+- `launch_robot.launch.py` — remapped `/diff_cont/odom` → `/odom` for Nav2 compatibility
+
+### 9) PID tuning validation (2026-03-13)
+Firmware defaults confirmed optimal: Kp=20, Kd=12, Ki=0, Ko=50. No firmware changes needed.
+
+### 10) Motor swap and encoder recalibration (2026-03-16)
+Motors replaced with JGA25-371 DC12V 130RPM, 45:1 (Amazon listing says 34:1 — inaccurate).
+- `ros2_control.xacro` — `enc_counts_per_rev` updated to 990, then re-validated 2026-03-17 → 1010
+
+### 11) URDF updated to actual robot dimensions (2026-03-16)
+- `robot_core.xacro` — chassis, wheel, caster dimensions from physical measurement
+- `lidar.xacro` — laser_frame xyz updated
+- `my_controllers.yaml` — `wheel_separation` 0.297 → 0.179, `wheel_radius` 0.0325 → 0.034
+
+### 12) RPLidar A1 M8 installed and robot model orientation fixed (2026-03-17)
+- `/etc/udev/rules.d/99-mybot.rules` — udev symlinks for `/dev/arduino` (CH340) and `/dev/rplidar` (CP2102)
+- `ros2_control.xacro` — device `/dev/ttyUSB0` → `/dev/arduino`
+- `rplidar.launch.py` — `serial_port /dev/rplidar`, `serial_baudrate 115200` (required — timeout without it)
+- `robot_core.xacro` — `chassis_joint rpy="0 0 pi"` to fix 180° backwards render
+- `~/.bashrc` — `mybot-launch` alias added
+
+### 13) SLAM with slam_toolbox configured and confirmed working (2026-03-18)
+- `online_async_launch.py` — `use_sim_time` default `true` → `false`
+- `mapper_params_online_async.yaml` — `mode: mapping`, `max_laser_range: 12.0`, reduced minimum travel thresholds
+
+### 14) BNO055 IMU + robot_localization EKF integrated (2026-03-18)
+- `robot_core.xacro` — `imu_link` added at xyz="0.004 -0.018 0.055"
+- `bno055_params.yaml` — I2C bus 1, addr 0x28, topic prefix `imu/`, NDOF mode
+- `ekf.yaml` — fuses `/diff_cont/odom` + `/imu/imu` → `/odom` at 20Hz, `two_d_mode true`
+- `launch_robot.launch.py` — added bno055 + ekf_node; EKF now owns `/odom`
+- EKF IMU config: orientation disabled (magnetometer unreliable on metal robot), angular velocity + linear accel enabled
+
+### 15) Nav2 launch files and params updated to Humble API (2026-03-20)
+- `navigation_launch.py` — rewritten: `recoveries_server` → `behavior_server`, added `smoother_server` and `velocity_smoother`
+- `localization_launch.py` — rewritten: `ParameterFile` wrapper, default map `~/mybot_ws/maps/my_map.yaml`
+- `nav2_params.yaml` — fully replaced with Humble-compatible params:
+  - `robot_model_type: "nav2_amcl::DifferentialMotionModel"` (old `"differential"` deprecated)
+  - `robot_radius: 0.17` | `inflation_radius: 0.35` | `laser_max_range: 12.0`
+  - Added `smoother_server`, `waypoint_follower`, `velocity_smoother` sections
+
+### 16) SLAM drift tuning (2026-03-21)
+`mapper_params_online_async.yaml`:
+- `minimum_time_interval: 0.5` → `0.3`
+- `link_match_minimum_response_fine: 0.1` → `0.3`
+- `loop_match_minimum_chain_size: 10` → `5`
+
+### 17) Nav2 velocity limits increased (2026-03-21)
+`nav2_params.yaml`: `max_vel_x: 0.26` → `0.4`, `max_speed_xy: 0.26` → `0.4`, velocity_smoother limits updated to match.
+Reason: robot lacked torque to move consistently at 0.26 m/s.
+
+### 18) RealSense D435 — librealsense source build with FORCE_RSUSB_BACKEND (2026-03-21, COMPLETE)
+Problem: apt librealsense compiled against kernel UVC driver; `xioctl(UVCIOC_CTRL_QUERY)` timeouts prevent color stream intrinsics. Depth worked; color failed.
+
+Solution: build librealsense v2.56.4 from source with `-DFORCE_RSUSB_BACKEND=ON`, then replace the apt `.so` (must match SONAME `librealsense2.so.2.56`):
 ```bash
-source /opt/ros/humble/setup.bash
-source ~/mybot_ws/install/setup.bash
+sudo apt remove ros-humble-librealsense2*
+sudo apt install libusb-1.0-0-dev libssl-dev cmake libgtk-3-dev
+git clone https://github.com/IntelRealSense/librealsense ~/librealsense && cd ~/librealsense && git checkout v2.56.4
+mkdir build && cd build
+cmake .. -DFORCE_RSUSB_BACKEND=ON -DBUILD_EXAMPLES=OFF -DBUILD_GRAPHICAL_EXAMPLES=OFF -DCMAKE_BUILD_TYPE=Release
+make -j2 && sudo make install && sudo ldconfig   # -j2 not -j4 — Pi OOMs with -j4
+sudo apt install ros-humble-realsense2-camera ros-humble-realsense2-description
+sudo cp /usr/local/lib/librealsense2.so.2.56.4 /opt/ros/humble/lib/aarch64-linux-gnu/librealsense2.so.2.56.4
 ```
+Key lessons: `LD_LIBRARY_PATH` tricks don't work — ROS setup.bash prepends its lib path; must overwrite the file. D435 may need physical replug after Pi reboot.
 
-### Install dependencies
+### 19) Motor driver swap: L298N → Adafruit TB6612 (2026-04-25, chip damaged — replacement needed)
+- `motor_driver.h` — added `TB6612_MOTOR_DRIVER` ifdef block
+- `motor_driver.ino` — added TB6612 `initMotorController()` and `setMotorSpeed()`
+- `ROSArduinoBridge.ino` — `#define L298_MOTOR_DRIVER` → `#define TB6612_MOTOR_DRIVER`
+
+Diagnosis: first unit damaged by 12V reaching AIN1/BIN1 logic pins (max VCC+0.5V = 5.5V). xIN2 pins unaffected (CCW direction worked). Confirmed via multimeter: BIN1 read 11.9V with motor supply connected.
+
+Note: `src/ros_arduino_bridge/` on Pi is a separate repo. Firmware edits in `articubot_one/src/ros_arduino_bridge/` must be SCP'd to Pi before flashing.
+
+### 20) TB6612 wiring table label correction + VCC documentation (2026-04-26)
+Root cause: original table had Motor A and Motor B labels swapped vs firmware. Firmware assigns `RIGHT_MOTOR_*` to Motor A (PWMA/AIN1/AIN2) and `LEFT_MOTOR_*` to Motor B (PWMB/BIN1/BIN2).
+Files corrected: `CLAUDE.md`, `HARDWARE_MEMORY.md`, `docs/pin-mapping.md`.
+
+### 21) ESP32 + micro-ROS experiment scaffolded (2026-04-26)
+Branch: `feature/esp32-microros`
+
+Files created:
+- `src/esp32_microros/platformio.ini` — ESP32-DevKitC, Arduino 3.x, micro-ROS humble, Adafruit BNO055
+- `src/esp32_microros/src/main.cpp` — full firmware: encoders + PID + odometry + BNO055 + micro-ROS pub/sub
+- `src/esp32_microros/test/test_bno055/` — BNO055 I2C test, serial output, calibration status
+- `src/esp32_microros/test/test_encoders/` — encoder pulse counting, direction verification
+- `src/esp32_microros/test/test_motors/` — TB6612 test with safety checklist
+- `src/esp32_microros/test/test_microros/` — micro-ROS transport test, heartbeat publisher
+
+Status at scaffold: firmware written, not yet flashed. BNO055 + INA219 subsequently confirmed on bench (2026-05-09). Motors/encoders confirmed 2026-05-09. micro-ROS transport confirmed 2026-05-10.
+
+### 22) ESP32-S3 board pin corrections — Lonely Binary Expansion Base (2026-05-09)
+Original ESP32 sketch used wrong board (`esp32dev`) and wrong GPIO pins (GPIO25/26/27/32/33/34/35/36/39 — not present on S3 or not broken out on Lonely Binary board). Fixed across all test sketches.
+
+Lonely Binary board layout — GPIO not broken out: 4, 5, 6, 7, 25, 26, 27, 32, 33, 34 (as output), 36 (S3 has no VP/VN), 43, 44.
+
+Final validated pin assignments:
+- TB6612: PWMA=10, AIN1=11, AIN2=12, PWMB=13, BIN1=14, BIN2=15
+- Encoders: Left A/B = 40/41, Right A/B = 42/39
+- I2C: SDA=8, SCL=9
+
+LEDC API: ESP32-S3 Arduino framework uses legacy API — `ledcSetup(ch, freq, res)` + `ledcAttachPin(pin, ch)` + channel-based `ledcWrite(ch, duty)`. New-style `ledcAttach(pin, freq, res)` not available.
+
+### 23) micro-ROS transport: micro_ros_platformio + USB HWCDC (2026-05-10)
+Problem 1: `micro_ros_arduino` humble branch has no precompiled `libmicroros.a` for `xtensa-esp32s3-elf` — only for original `esp32`, ARM Cortex-M, and Teensy targets. Linker errors: `undefined reference to rclc_executor_fini` etc.
+
+Fix: replaced `micro_ros_arduino` zip with `micro_ros_platformio` library, which cross-compiles `libmicroros.a` for the exact PlatformIO target at build time.
+
+Problem 2: `micro_ros_platformio` build script needs `~/.platformio/penv/bin/activate` but pip-installed PlatformIO doesn't create this venv.
+
+Fix: manually created fake penv:
 ```bash
-rosdep install --from-paths src --ignore-src -r -y
+mkdir -p ~/.platformio/penv/bin
+ln -sf /usr/bin/python3 ~/.platformio/penv/bin/python
+printf 'export PATH="%s/.platformio/penv/bin:$PATH"\n' "$HOME" > ~/.platformio/penv/bin/activate
+mkdir -p ~/.platformio/penv/lib/python3.10/site-packages
+printf '/usr/lib/python3/dist-packages\n/usr/local/lib/python3.10/dist-packages\n' > ~/.platformio/penv/lib/python3.10/site-packages/system.pth
 ```
 
-### Build
-```bash
-colcon build --symlink-install
+Problem 3: ESP32-S3 with native USB connected to Pi — `Serial` (UART0) goes to CH340 chip, but only the native USB JTAG port (ttyACM0) was connected. `Serial.write()` sent data nowhere.
+
+Fix: added `build_flags = -DARDUINO_USB_CDC_ON_BOOT=1` to `platformio.ini`. The board definition already has `ARDUINO_USB_MODE=1` (HWCDC), so adding CDC_ON_BOOT routes `Serial` to the HWCDC peripheral which appears as `/dev/ttyACM0` on the Pi.
+
+Problem 4: Connection cycling — ping timeout 100ms/1 attempt caused false disconnects after publish.
+
+Fix: increased to `rmw_uros_ping_agent(500, 3)` and executor spin to 10ms.
+
+Transport summary:
+- ESP32 `Serial` → HWCDC → USB cable → Pi `/dev/ttyACM0`
+- WiFi retained for OTA flashing and TelnetStream monitoring only
+- micro-ROS agent workspace: `~/microros_ws` (built from source — `ros-humble-micro-ros-agent` not in apt for arm64)
+- Agent command: `source ~/microros_ws/install/setup.bash && ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyACM0`
+
+### 24) Full ESP32-S3 production firmware (2026-05-10)
+Files: `src/esp32_microros/platformio.ini` and `src/esp32_microros/src/main.cpp` — complete rewrite from scaffold.
+
+`platformio.ini` changes:
+- Board: `esp32dev` → `esp32-s3-devkitc-1`
+- Library: `micro_ros_arduino` zip → `micro_ros_platformio`
+- Added: `board_microros_distro = humble`, `board_microros_transport = serial`, `ARDUINO_USB_CDC_ON_BOOT=1`
+- Added libs: `Adafruit INA219@^1.2.3`, `TelnetStream@^1.3.0`
+- Added OTA env `[env:esp32-s3-ota]`
+
+`main.cpp` — full production firmware combining all validated components:
+- WAITING/CONNECTED state machine (identical pattern to test_microros)
+- Encoders: GPIO40/41 (left), GPIO42/39 (right), INPUT_PULLUP, IRAM_ATTR ISRs
+- PID: Kp=20, Kd=12, Ki=0 (from validated Arduino firmware); targets zeroed on agent loss
+- Differential drive odometry → pub `/diff_cont/odom` at 30Hz
+- BNO055 (GPIO8/9, 0x28) → pub `/imu/imu` at 30Hz; orientation_covariance[0]=-1 (EKF ignores orientation)
+- INA219 (GPIO8/9, 0x40) → pub `/battery_state` at 1Hz; logged to TelnetStream
+- TB6612 motors GPIO10-15, legacy LEDC API (ledcSetup/ledcAttachPin/ledcWrite, ch 0/1, 1kHz 8-bit)
+- Sub `/diff_cont/cmd_vel_unstamped` → wheel rad/s targets
+- Ping keep-alive every 2s; motors stop immediately on agent loss
+- Odometry + encoder counts reset to 0 on each reconnect
+- Build: 862KB flash (27.4%), 74KB RAM (22.8%) — well within huge_app.csv limits
+- Flashed via OTA 2026-05-10 17:13
+
+### 25) Pi launch migrated from ros2_control to micro_ros_agent (2026-05-10)
+File: `src/articubot_one/launch/launch_robot.launch.py`
+
+Removed: `controller_manager`, `delayed_controller_manager`, `diff_drive_spawner`, `joint_broad_spawner`, bno055 node, ina219 node, `robot_description` variable, `controller_params_file`, `Command`/`RegisterEventHandler`/`OnProcessStart` imports.
+
+Added: `micro_ros_agent` Node (`ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyACM0`).
+
+Note: `micro_ros_agent` is built from source in `~/microros_ws` on Pi (not in apt for arm64). The mybot-launch alias was updated to `source ~/microros_ws/install/setup.bash` before launch.
+
+### 26) ESP32 PID tuning and motor cross-wiring fix (2026-05-10)
+Problem: violent motor jolting during turns and runaway at ±12 rad/s with zero target.
+
+Root cause: a previous debugging attempt swapped PWMA↔PWMB channel assignments in `motor_set()` calls. This created a cross-wired positive feedback loop: pid_l read the left encoder but drove the right motor; correcting one motor accelerated the other. The runaway was stable at max speed because both PIDs saturated at ±255.
+
+Fix: reverted motor assignment to original correct wiring:
+```cpp
+motor_set(PWMB_CH, BIN1, BIN2, pid_compute(pid_l, vel_l, dt));  // Left PID → Motor B (Left)
+motor_set(PWMA_CH, AIN1, AIN2, pid_compute(pid_r, vel_r, dt));  // Right PID → Motor A (Right)
 ```
 
-### Clean rebuild
-```bash
-rm -rf build install log
-colcon build --symlink-install
+Also changed PID gains: `Kp=100 → Kp=30` (Kp=100 caused oscillation at turn speeds with no Kd), `Ki=150` retained (overcomes deadband), `Kd=0` retained.
+
+Also added coast-to-stop: when target is near zero, PID returns 0 (motor coasts) instead of actively braking. Eliminates hard stop jerk on key release:
+```cpp
+if (fabsf(p.target) < 0.01f) { p.integral = 0.0f; p.prev_err = 0.0f; return 0; }
 ```
 
-### Launch robot
-```bash
-mybot-launch
-```
-Alias clears /dev/arduino and /dev/rplidar before launching. Starts: robot_state_publisher, ros2_control_node, diff_drive_controller, joint_state_broadcaster, twist_mux, rplidar, bno055, ekf_filter_node.
-
-### Check IMU
-```bash
-sudo i2cdetect -y 1        # confirm BNO055 at 0x28
-ros2 topic echo /imu/imu   # verify IMU data flowing
-ros2 topic echo /imu/calib_status  # check calibration (0-3, 3=fully calibrated)
-```
-
-### Check odometry
-```bash
-ros2 topic echo /odom              # EKF filtered odometry
-ros2 topic echo /diff_cont/odom    # raw wheel odometry
-```
-
-### Package checks
-```bash
-ros2 pkg list | grep diffdrive
-ros2 pkg executables diffdrive_arduino
-ros2 pkg executables serial
-```
-
-### Serial checks
-```bash
-ls /dev/ttyUSB*
-python3 -m serial.tools.miniterm /dev/ttyUSB0 57600
-```
-
-## Launch Behavior Notes
-From `launch_robot.launch.py`:
-- includes `rsp.launch.py` with:
-  - `use_sim_time=false`
-  - `use_ros2_control=true`
-- runs `twist_mux`
-- remaps `/cmd_vel_out` to `/diff_cont/cmd_vel_unstamped`
-- starts `ros2_control_node`
-- spawns:
-  - `diff_cont`
-  - `joint_broad`
-- controller manager startup is delayed by `3.0` seconds
-
-## Robot Physical Dimensions
-Source: `Hardware/mybot/` — CAD renders (mybot_dim.png and orthographic views)
-
-### Orientation
-- **Front** = drive wheel side (curved bumper)
-- **Back** = caster side (flat end)
-- Note: opposite of tutorial robot orientation — verify when editing URDF
-
-### Chassis (all mm)
-- Chassis length (front→back): `240`
-- Chassis plate width: `135.5`
-- Total width incl. motors: `200` (left overhang 26.2mm, right 38.3mm — slightly asymmetric)
-- Lidar standoff base: `25mm`
-- Back wall/caster assembly height: `95mm`
-- Total height (ground→lidar top): `153.25`
-- Lower plate height from ground: `47.25` (±0.1)
-- Inter-deck gap: `40`
-- Standoff outer span (side view): `96.5`
-- Standoff inner span (side view): `70`
-- Plate thickness: `5`
-
-### Wheels & Caster
-- Wheel diameter: `Ø65mm` → radius `32.5mm` ✓
-- Wheel separation: `297mm` center-to-center ✓
-- Wheel axle from front edge: `83.5mm` → 36.5mm ahead of chassis center
-- Caster: `R10` ball (20mm diameter)
-- Caster from back edge: `33mm` → 87mm behind chassis center
-
-### Derived URDF values
-- Wheel axle height from ground: `32.5mm`
-- Lower plate above axle: `47.25 − 32.5 = 14.75mm`
-- Caster x from chassis center: `−87mm`
-- Lidar: centered laterally (y=0), x and z position TBD from physical measurement
-
-### Derived URDF values (applied 2026-03-16)
-- `wheel_offset_x`: `0.1565` (chassis rear to wheel axle = 240 − 83.5mm)
-- `wheel_offset_y`: `0.0895` (half of 179mm c-t-c)
-- `wheel_offset_z`: `-0.010` (plate is 10mm ABOVE axle — negative)
-- `caster_wheel_offset_x`: `0.033` (33mm from rear in chassis frame)
-- Lidar xyz in chassis frame: `0.200, 0, 0.116` (40mm from front, 160mm scan plane from ground)
-- Ground to top of top plate: `96mm`
-
-## Hardware / Wiring Notes
-### Serial / firmware behavior from `ros_arduino_bridge/README.md`
-- default baud rate: `57600`
-- command examples:
-  - `e` → encoder counts
-  - `r` → reset encoders
-  - `o <PWM1> <PWM2>` → raw PWM
-  - `m <Spd1> <Spd2>` → closed-loop speed
-  - `p <Kp> <Kd> <Ki> <Ko>` → PID update
-- firmware expects carriage return
-- serial user should be in `dialout`
-
-### Confirmed working pin mapping — Adafruit TB6612 (swapped from L298N 2026-04-25)
-TB6612 → Arduino Nano:
-```
-VCC  → 5V   (sets logic thresholds for all signal pins — must match MCU logic voltage)
-PWMA → D5   (PWM, right motor speed)
-AIN2 → D6   (right motor direction B)
-AIN1 → D7   (right motor direction A)
-BIN1 → D8   (left motor direction A)
-BIN2 → D9   (left motor direction B)
-PWMB → D10  (PWM, left motor speed)
-STBY → not wired (Adafruit breakout has onboard pullup — defaults HIGH)
-```
-Motor channel assignment: Motor A (PWMA/AIN1/AIN2) = RIGHT motor, Motor B (PWMB/BIN1/BIN2) = LEFT motor.
-
-VCC logic threshold note: All signal pins (AIN1/2, BIN1/2, PWMA/B, STBY) are validated against VCC. Arduino Nano is 5V logic → VCC must be 5V. Max safe input = VCC + 0.5V = 5.5V. (For an ESP32 at 3.3V logic, connect VCC to 3.3V — no level shifter needed.)
-
-Firmware define: `TB6612_MOTOR_DRIVER`
-Validated 2026-05-03: both motors spin in both directions, encoder counts positive for forward.
-If robot moves backward when commanded forward, swap that motor's output wires at the TB6612 terminals.
-Encoders:
-```
-Left  encoder A → D2  (INT0)
-Left  encoder B → D4
-Right encoder A → D3  (INT1)
-Right encoder B → D12
-```
-Motor logic: PWM on ENA/ENB, direction on IN pins via digitalWrite.
-Direction was corrected by swapping IN1↔IN2 and IN3↔IN4 in firmware (motors ran reversed initially).
-
-### Known encoder wire colors (DC12V 130RPM Amazon gear motors, installed 2026-03-16)
-- Red: motor power +
-- White: motor power -
-- Blue: encoder power + (3.3–5V)
-- Black: encoder power -
-- Yellow: encoder A phase
-- Green: encoder B phase
-
-### Hardware docs Claude should preserve
-Create or maintain these if absent:
-- `docs/pin-mapping.md`
-- `docs/wire-colors.md`
-- `docs/pin-locations.md`
-- `docs/hardware-block-diagram.md`
-- `docs/known-good-wiring.md`
-
-## Tutorial Progress
-Following: https://articulatedrobotics.xyz/category/build-a-mobile-robot-with-ros
-Author repos: https://github.com/joshnewans
-
-```
-Build a Mobile Robot with ROS
-├── Project Overview                                              ✅ done
-├── Concept Design
-│   ├── URDF Design                                              ✅ done
-│   └── Gazebo Simulation                                        ✅ done
-├── Hardware
-│   ├── The Brain - Raspberry Pi                                 ✅ done
-│   ├── Power Concepts                                           ✅ done
-│   ├── Adding Lidar                                             ✅ done (2026-03-17)
-│   └── Adding a Camera                                          ✅ done (2026-03-21) — RSUSB backend, both streams 15 FPS
-└── Applications
-    ├── ros2_control Concepts & Simulation                       ✅ done
-    ├── ros2_control extra bits                                   ✅ done
-    ├── ros2_control on the real robot                           ✅ done (+ full validation 2026-03-13)
-    ├── Teleoperation                                            ✅ done
-    ├── SLAM with slam_toolbox                                   ✅ done (2026-03-18) — map saved; new map 2026-03-21
-    ├── Navigation with Nav2                                     ✅ done (2026-03-21) — robot navigates autonomously to goals
-    └── Object Tracking with OpenCV                             ⬜ pending
-
-Camera hardware notes:
-- D435 FW version: 5.17.0.10, Serial: 244622071235
-- Depth stream: working (640x480@15fps) ✅
-- Color stream: working (640x480@15fps) ✅ — RSUSB backend (fix #18 complete)
-- IR streams: DISABLED (not needed for object tracking; reduces USB bandwidth demand)
-- QoS: VOLATILE on color + depth topics (required for cross-network DDS discovery)
-- launch/camera.launch.py — wraps rs_launch.py, 640x480@15fps, no pointcloud, no align_depth, no IR, VOLATILE QoS
-- camera included in launch_robot.launch.py (reset script runs first, 20s timer delay)
-- USB 3.0 vs USB 2.0: On USB 3.0 (normal after Pi boot) streaming works great. On USB 2.0 (can happen after session teardown) streaming still works but at reduced fps. Pi reboot restores USB 3.0.
-- After kill-9 + restart: reset_realsense.sh does authorization reset (echo 0/1 to sysfs /authorized) to clear XU endpoint stalls — no physical replug needed
-- DO NOT run uhubctl on the camera port — causes USB 3.0→2.0 fallback
-```
-
-### Repositories
-- `https://github.com/joshnewans/articubot_one` — base robot package
-- `https://github.com/joshnewans/diffdrive_arduino`
-- `https://github.com/joshnewans/serial`
-
-### Tutorials / upstream references
-- `https://youtu.be/J02jEKawE5U`
-- `https://github.com/ros-controls/ros2_control_demos/tree/master/example_2`
-
-### Hardware references from project history
-- `https://www.robotshop.com/products/e-s-motor-25d-12v-encoder-gear-motor-w-mounting-bracket-65mm-wheel-smart-robot-diy`
-- `https://cdn.robotshop.com/rbm/a00a7635-653b-4220-aac9-b0c23c5c5e2c/9/937bc8fd-df7e-4549-84e7-739dc23aaa9d/c1a0ee55_25d-encoder-gear-motor-kits.pdf`
-
-## Helpful Images In Repo
-- `src/diffdrive_arduino/doc/diffbot.png`
-
-## Missing But Important Visuals To Add
-These are not present in the repo snapshot and should be added:
-- real robot wiring photo
-- Arduino pin location image
-- motor driver pin location image
-- wheel left/right orientation photo
-- encoder wire color photo or datasheet screenshot
-- top-level hardware block diagram
-- USB/serial connection photo
-- known-good wiring diagram
-
-## Project Reality Check
-- `articubot_one` still contains template placeholders in `README.md` and `package.xml`.
-- `ros_arduino_bridge` still exists in source tree, but should be treated as reference firmware / legacy material, not the active ROS 2 software path.
-- The working system depends on exact plugin naming, paired branches, and clean rebuild discipline.
+Teleop validated: forward, left/right turns, and combined arc all stable. Driven via `teleop_twist_keyboard` on dev machine.

@@ -11,12 +11,14 @@ Claude Code runs on dev. It reaches the Pi via `ssh ryan@mybot "..."`.
 
 | Component | Machine | Launch |
 |---|---|---|
-| ros2_control, motors, encoders | Pi | `mybot-launch` |
-| RPLidar, BNO055 IMU, RealSense | Pi | `mybot-launch` |
+| micro_ros_agent (ESP32 bridge) | Pi | `mybot-launch` |
+| RPLidar, RealSense | Pi | `mybot-launch` |
 | EKF (robot_localization) | Dev | `dev_launch.py` |
 | Nav2 (AMCL, planner, controller) | Dev | `navigation_launch.py` |
 | Ball tracker / OpenCV | Dev | `ball_tracker.launch.py` |
 | RViz2 | Dev | `rviz2` |
+
+> BNO055 IMU and INA219 are handled entirely by the ESP32-S3 over micro-ROS — no Pi-side sensor nodes needed.
 
 ### Full launch sequence
 
@@ -43,13 +45,15 @@ rviz2
 ### Emergency stop
 
 ```bash
-# Send zero velocity
-source /opt/ros/humble/setup.bash
-ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist '{}'
+# Send zero velocity (continuous pub — --once latches in twist_mux and won't stop the robot)
+ros2 topic pub /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.0}, angular: {z: 0.0}}" -r 10 &
+SPID=$!; sleep 2; kill $SPID; wait $SPID 2>/dev/null
 
-# If ros2_control is down, stop Arduino directly via serial (on Pi)
-ssh ryan@mybot "python3 -c \"import serial,time; s=serial.Serial('/dev/arduino',57600,timeout=1); s.write(b'm 0 0\r'); time.sleep(0.2); s.close()\""
+# Hard stop — kill micro_ros_agent on Pi; ESP32 detects loss in ~2s and calls motors_stop()
+ssh ryan@192.168.86.33 "ps aux | grep micro_ros | grep -v grep | awk '{print \$2}' | xargs kill -9"
 ```
+
+> **Warning:** Always use `-r 10` continuous publishers for velocity commands. `--once` latches the command in twist_mux — the robot keeps moving until a new message overrides it. Check publisher count with `ros2 topic info /cmd_vel`.
 
 > **Warning:** Always kill ball_tracker before closing its tuning window — `follow_ball` keeps sending velocity commands after the window closes.
 
@@ -66,7 +70,7 @@ Run this at the end of every session. Claude Code can execute it on your behalf.
 pkill -f "ros2 launch\|detect_ball\|follow_ball\|ekf_filter\|nav2\|amcl\|map_server" 2>/dev/null
 
 # Pi — kill hardware nodes
-ssh ryan@mybot "sudo pkill -f 'ros2 launch\|ros2_control_node\|rplidar\|bno055\|realsense2_camera' 2>/dev/null"
+ssh ryan@mybot "sudo pkill -f 'ros2 launch\|micro_ros_agent\|rplidar\|realsense2_camera' 2>/dev/null"
 ```
 
 ### 2. Update CLAUDE.md (on dev)
@@ -125,39 +129,33 @@ Memory files live at:
 └── serial/                 ← branch: newans_ros2
 ```
 
-## ESP32 micro-ROS Testing (branch: feature/esp32-microros)
+## ESP32-S3 micro-ROS Stack (production)
 
-Replaces the Arduino + Pi BNO055 I2C path. Pi-side EKF, Nav2, AMCL unchanged.
+ESP32-S3 handles motors, encoders, BNO055 IMU, and INA219 power monitor. Pi runs `micro_ros_agent` as the bridge. EKF, Nav2, AMCL are unchanged and run on dev.
 
-**On Pi — instead of the normal hardware nodes, run:**
+**`mybot-launch` already starts the agent.** To run it manually on Pi:
 ```bash
-# Start micro-ROS agent (bridges ESP32 ↔ ROS2)
-ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyUSB0
+source ~/microros_ws/install/setup.bash
+ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyACM0
 ```
 
-**Then launch the rest of the stack normally:**
+**OTA firmware flash (from dev):**
 ```bash
-# Dev — EKF, localization, Nav2, RViz2 — identical to normal sequence
-ros2 launch articubot_one dev_launch.py
-ros2 launch articubot_one localization_launch.py
-ros2 launch articubot_one navigation_launch.py
-rviz2
+cd ~/dev_ws/src/articubot_one/src/esp32_microros
+pio run -e esp32-s3-ota --target upload
 ```
 
-**Flash firmware to ESP32:**
+**Wireless serial monitor:**
 ```bash
-cd src/esp32_microros
-pio run --target upload
+nc esp32-mybot.local 23
 ```
 
 **Verify topics are live:**
 ```bash
-ros2 topic hz /diff_cont/odom       # expect ~20 Hz
-ros2 topic hz /imu/imu              # expect ~20 Hz
-ros2 topic echo /diff_cont/odom --once
+ros2 topic hz /diff_cont/odom       # expect ~30 Hz
+ros2 topic hz /imu/imu              # expect ~30 Hz
+ros2 topic echo /battery_state
 ```
-
-**To switch back to Arduino stack:** unplug ESP32, plug in Arduino, use normal `mybot-launch`.
 
 See `docs/pin-mapping.md` for full ESP32 wiring table.
 
