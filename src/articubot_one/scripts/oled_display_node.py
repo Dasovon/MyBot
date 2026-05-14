@@ -103,6 +103,11 @@ class OledDisplayNode(Node):
             self._cmd(0xAF)
 
             self._font = ImageFont.truetype(FONT_PATH, FONT_SIZE)
+            # Boot diagnostic fill — confirms SPI data writes work at init time
+            for page in range(8):
+                self._cmd(0xB0 + page); self._cmd(0x00); self._cmd(0x10)
+                GPIO.output(DC_PIN, GPIO.HIGH)
+                self._spi.writebytes([0xFF] * WIDTH)
             self.get_logger().info('Display init OK')
         except Exception as e:
             self.get_logger().warn(f'Display init failed: {e}')
