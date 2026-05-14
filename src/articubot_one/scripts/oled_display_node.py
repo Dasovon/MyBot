@@ -70,18 +70,22 @@ class OledDisplayNode(Node):
         try:
             GPIO.setwarnings(False)
             GPIO.setmode(GPIO.BCM)
-            GPIO.setup(DC_PIN, GPIO.OUT)
-            GPIO.setup(RST_PIN, GPIO.OUT)
+            GPIO.setup(DC_PIN, GPIO.OUT, initial=GPIO.LOW)
+            # Drive RST LOW before opening SPI — holds display in reset while
+            # the SPI clock line transitions to its idle state (HIGH for mode 3),
+            # preventing spurious commands from reaching the SSD1309 on first boot.
+            GPIO.setup(RST_PIN, GPIO.OUT, initial=GPIO.LOW)
 
             self._spi = spidev.SpiDev()
             self._spi.open(0, 0)
             self._spi.max_speed_hz = 1000000
             self._spi.mode = 0b11
 
-            # Hardware reset
+            # Hardware reset — RST is already LOW from setup above
+            time.sleep(0.1)                       # hold in reset
             GPIO.output(RST_PIN, GPIO.HIGH); time.sleep(0.1)
             GPIO.output(RST_PIN, GPIO.LOW);  time.sleep(0.1)
-            GPIO.output(RST_PIN, GPIO.HIGH); time.sleep(0.1)
+            GPIO.output(RST_PIN, GPIO.HIGH); time.sleep(0.2)  # longer settle
 
             # SSD1309 init sequence
             self._cmd(0xAE)
@@ -99,6 +103,7 @@ class OledDisplayNode(Node):
             self._cmd(0xAF)
 
             self._font = ImageFont.truetype(FONT_PATH, FONT_SIZE)
+            self.get_logger().info('Display init OK')
         except Exception as e:
             self.get_logger().warn(f'Display init failed: {e}')
             self._spi = None
