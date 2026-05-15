@@ -88,20 +88,22 @@ class OledDisplayNode(Node):
             GPIO.output(RST_PIN, GPIO.HIGH); time.sleep(0.2)  # longer settle
 
             # SSD1309 init sequence
-            self._cmd(0xAE)
-            self._cmd(0x00); self._cmd(0x10)
-            self._cmd(0x20); self._cmd(0x00)
-            self._cmd(0xFF)
-            self._cmd(0xA6)
-            self._cmd(0xA8); self._cmd(0x3F)
-            self._cmd(0xD3); self._cmd(0x00)
-            self._cmd(0xD5); self._cmd(0x80)
-            self._cmd(0xD9); self._cmd(0x22)
-            self._cmd(0xDA); self._cmd(0x12)
-            self._cmd(0xDB); self._cmd(0x40)
+            self._cmd(0xAE)          # display off
+            self._cmd(0x20); self._cmd(0x02)  # page addressing mode (matches _show)
+            self._cmd(0x40)          # start line 0
+            self._cmd(0xA1)          # segment remap (col 127 = SEG0)
+            self._cmd(0xA6)          # normal display (not inverted)
+            self._cmd(0xA8); self._cmd(0x3F)  # multiplex ratio 64
+            self._cmd(0xC8)          # COM scan direction remapped
+            self._cmd(0xD3); self._cmd(0x00)  # display offset 0
+            self._cmd(0xD5); self._cmd(0x80)  # clock divide / osc freq
+            self._cmd(0xD9); self._cmd(0x22)  # pre-charge period
+            self._cmd(0xDA); self._cmd(0x12)  # COM pins config
+            self._cmd(0xDB); self._cmd(0x40)  # VCOMH deselect level
+            self._cmd(0x81); self._cmd(0x7F)  # contrast
+            self._cmd(0xA4)          # resume to GDDRAM content
             time.sleep(0.1)
-            self._cmd(0xA4)   # Resume to GDDRAM content
-            self._cmd(0xAF)   # Display ON
+            self._cmd(0xAF)          # display ON
 
             self._font = ImageFont.truetype(FONT_PATH, FONT_SIZE)
             self.get_logger().info('Display init OK')
