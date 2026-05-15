@@ -55,6 +55,14 @@ static constexpr float KI     = 150.0f;
 static constexpr float KI_MAX =   1.0f;  // integral clamp (PWM contribution = KI * KI_MAX)
 
 
+// ── Velocity lowpass filter ───────────────────────────────────────────
+// Left encoder produces erratic velocity readings (noise on GPIO40/41 wiring).
+// EMA smooths the signal before PID sees it, stopping the PID from over-correcting
+// against noise and causing PWM to oscillate. Fix hardware (check GPIO40/41 wires)
+// to eliminate root cause; this reduces the symptom in the meantime.
+static constexpr float VEL_ALPHA = 0.2f;  // EMA coefficient; 1.0 = no filtering
+static float vel_l_filt = 0.0f, vel_r_filt = 0.0f;
+
 struct PID { float target = 0.0f, prev_err = 0.0f, integral = 0.0f; };
 static PID pid_l, pid_r;
 
@@ -261,6 +269,7 @@ void loop() {
                     prev_l = 0; prev_r = 0;
                     pid_l.prev_err = 0.0f; pid_r.prev_err = 0.0f;
                     pid_l.integral = 0.0f; pid_r.integral = 0.0f;
+                    vel_l_filt = 0.0f; vel_r_filt = 0.0f;
                     t_control = now; t_battery = now; t_ping = now;
                     state = CONNECTED;
                     log("[esp32_robot] connected\n");
@@ -290,10 +299,13 @@ void loop() {
                 float vel_l = (float)dl * COUNTS_TO_RAD / dt;  // rad/s
                 float vel_r = (float)dr * COUNTS_TO_RAD / dt;
 
-                motor_set(PWMB_CH, BIN1, BIN2, pid_compute(pid_l, vel_l, dt));  // Left PID → Motor B (Left)
-                motor_set(PWMA_CH, AIN1, AIN2, pid_compute(pid_r, vel_r, dt));  // Right PID → Motor A (Right)
-                log("[enc] tgt=%.2f/%.2f act=%.2f/%.2f\n",
-                    pid_l.target, pid_r.target, vel_l, vel_r);
+                vel_l_filt = VEL_ALPHA * vel_l + (1.0f - VEL_ALPHA) * vel_l_filt;
+                vel_r_filt = VEL_ALPHA * vel_r + (1.0f - VEL_ALPHA) * vel_r_filt;
+
+                motor_set(PWMB_CH, BIN1, BIN2, pid_compute(pid_l, vel_l_filt, dt));  // Left PID → Motor B (Left)
+                motor_set(PWMA_CH, AIN1, AIN2, pid_compute(pid_r, vel_r_filt, dt));  // Right PID → Motor A (Right)
+                log("[enc] tgt=%.2f/%.2f act=%.2f/%.2f filt=%.2f/%.2f\n",
+                    pid_l.target, pid_r.target, vel_l, vel_r, vel_l_filt, vel_r_filt);
 
                 float dist_l = (float)dl * COUNTS_TO_RAD * WHEEL_RADIUS;
                 float dist_r = (float)dr * COUNTS_TO_RAD * WHEEL_RADIUS;
