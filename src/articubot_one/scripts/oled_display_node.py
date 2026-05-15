@@ -85,10 +85,16 @@ class OledDisplayNode(Node):
             self._spi.max_speed_hz = 100000
             self._spi.mode = 0b11
 
-            # Dummy write — primes the SPI controller on cold boot.
-            # The first transaction after a fresh kernel SPI init is unreliable;
-            # this sacrificial byte settles it. RST is LOW so display ignores it.
+            # On first kernel boot the SPI controller isn't fully settled.
+            # One dummy byte isn't enough — close+reopen forces the kernel to
+            # fully re-apply the mode/speed config before the real init sequence.
+            # RST is LOW so the display ignores all of this.
             self._spi.writebytes([0x00])
+            time.sleep(0.1)
+            self._spi.close()
+            self._spi.open(0, 0)
+            self._spi.max_speed_hz = 100000
+            self._spi.mode = 0b11
             time.sleep(0.05)
 
             # Hardware reset — RST is already LOW from setup above
