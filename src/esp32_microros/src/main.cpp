@@ -56,12 +56,17 @@ static constexpr float KI_MAX =   1.0f;  // integral clamp (PWM contribution = K
 
 
 // ── Velocity lowpass filter ───────────────────────────────────────────
-// Left encoder produces erratic velocity readings (noise on GPIO40/41 wiring).
-// EMA smooths the signal before PID sees it, stopping the PID from over-correcting
-// against noise and causing PWM to oscillate. Fix hardware (check GPIO40/41 wires)
-// to eliminate root cause; this reduces the symptom in the meantime.
-static constexpr float VEL_ALPHA = 0.2f;  // EMA coefficient; 1.0 = no filtering
+// EMA velocity filter: suppresses left encoder EMI noise (GPIO40/41) before PID sees it.
+// alpha=0.2 confirmed smooth turning/straight; fix hardware (100nF caps) to remove root cause.
+static constexpr float VEL_ALPHA = 0.2f;
 static float vel_l_filt = 0.0f, vel_r_filt = 0.0f;
+
+// Command ramp: smooths abrupt step inputs so the first PID tick doesn't punch.
+// Preseed integral handles the deadband on the very first ramp step.
+static constexpr float LIN_ACCEL = 0.50f;  // m/s² ramp rate — tune up if sluggish
+static constexpr float ANG_ACCEL = 1.50f;  // rad/s² ramp rate — tune up if sluggish
+static float cmd_lin = 0.0f, cmd_ang = 0.0f;
+static float ramp_lin = 0.0f, ramp_ang = 0.0f;
 
 struct PID { float target = 0.0f, prev_err = 0.0f, integral = 0.0f; };
 static PID pid_l, pid_r;
@@ -138,10 +143,8 @@ static void log(const char* fmt, Args... args) {
 // ── cmd_vel callback ──────────────────────────────────────────────────
 static void cmd_cb(const void* msg) {
     const auto* m = (const geometry_msgs__msg__Twist*)msg;
-    float lin = m->linear.x;
-    float ang = m->angular.z;
-    pid_l.target = (lin - ang * WHEEL_SEP * 0.5f) / WHEEL_RADIUS;
-    pid_r.target = (lin + ang * WHEEL_SEP * 0.5f) / WHEEL_RADIUS;
+    cmd_lin = m->linear.x;
+    cmd_ang = m->angular.z;
 }
 
 // ── micro-ROS entity management ───────────────────────────────────────
@@ -269,7 +272,10 @@ void loop() {
                     prev_l = 0; prev_r = 0;
                     pid_l.prev_err = 0.0f; pid_r.prev_err = 0.0f;
                     pid_l.integral = 0.0f; pid_r.integral = 0.0f;
+                    pid_l.target = 0.0f; pid_r.target = 0.0f;
                     vel_l_filt = 0.0f; vel_r_filt = 0.0f;
+                    cmd_lin = 0.0f; cmd_ang = 0.0f;
+                    ramp_lin = 0.0f; ramp_ang = 0.0f;
                     t_control = now; t_battery = now; t_ping = now;
                     state = CONNECTED;
                     log("[esp32_robot] connected\n");
@@ -302,8 +308,31 @@ void loop() {
                 vel_l_filt = VEL_ALPHA * vel_l + (1.0f - VEL_ALPHA) * vel_l_filt;
                 vel_r_filt = VEL_ALPHA * vel_r + (1.0f - VEL_ALPHA) * vel_r_filt;
 
-                motor_set(PWMB_CH, BIN1, BIN2, pid_compute(pid_l, vel_l_filt, dt));  // Left PID → Motor B (Left)
-                motor_set(PWMA_CH, AIN1, AIN2, pid_compute(pid_r, vel_r_filt, dt));  // Right PID → Motor A (Right)
+                // Ramp cmd toward user command; snap to zero immediately on stop command
+                if (fabsf(cmd_lin) < 0.01f && fabsf(cmd_ang) < 0.01f) {
+                    ramp_lin = 0.0f;
+                    ramp_ang = 0.0f;
+                } else {
+                    ramp_lin += constrain(cmd_lin - ramp_lin, -LIN_ACCEL * dt, LIN_ACCEL * dt);
+                    ramp_ang += constrain(cmd_ang - ramp_ang, -ANG_ACCEL * dt, ANG_ACCEL * dt);
+                }
+                float tl = (ramp_lin - ramp_ang * WHEEL_SEP * 0.5f) / WHEEL_RADIUS;
+                float tr = (ramp_lin + ramp_ang * WHEEL_SEP * 0.5f) / WHEEL_RADIUS;
+
+                // Preseed integral on rest→move to overcome deadband on first ramp step
+                auto preseed = [](PID& p, float nt) {
+                    if (fabsf(p.target) < 0.01f && fabsf(nt) > 0.01f) {
+                        float s = (nt > 0) ? 1.0f : -1.0f;
+                        p.integral = constrain(s * (70.0f - KP * fabsf(nt)) / KI, -KI_MAX, KI_MAX);
+                    }
+                };
+                preseed(pid_l, tl);
+                preseed(pid_r, tr);
+                pid_l.target = tl;
+                pid_r.target = tr;
+
+                motor_set(PWMB_CH, BIN1, BIN2, pid_compute(pid_l, vel_l_filt, dt));
+                motor_set(PWMA_CH, AIN1, AIN2, pid_compute(pid_r, vel_r_filt, dt));
                 log("[enc] tgt=%.2f/%.2f act=%.2f/%.2f filt=%.2f/%.2f\n",
                     pid_l.target, pid_r.target, vel_l, vel_r, vel_l_filt, vel_r_filt);
 
