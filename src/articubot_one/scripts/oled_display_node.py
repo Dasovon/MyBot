@@ -101,9 +101,10 @@ class OledDisplayNode(Node):
             self._cmd(0xDA); self._cmd(0x12)  # COM pins config
             self._cmd(0xDB); self._cmd(0x40)  # VCOMH deselect level
             self._cmd(0x81); self._cmd(0x7F)  # contrast
-            self._cmd(0xA4)          # resume to GDDRAM content
-            time.sleep(0.1)
             self._cmd(0xAF)          # display ON
+            self._cmd(0xA5)          # all pixels ON — charges OLED pump capacitors
+            time.sleep(1.0)          # hold 1s so capacitors fully charge on cold boot
+            self._cmd(0xA4)          # resume to GDDRAM content
 
             self._font = ImageFont.truetype(FONT_PATH, FONT_SIZE)
             self.get_logger().info('Display init OK')
