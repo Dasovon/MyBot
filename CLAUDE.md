@@ -779,8 +779,8 @@ of continued motion after the stop key is pressed.
 2. **Command ramp** shapes cmd_vel before it reaches PID targets. Eliminates startup punch.
    Stop command (both cmd_lin and cmd_ang ≈ 0) snaps ramp to zero immediately for crisp stop.
    ```cpp
-   static constexpr float LIN_ACCEL = 0.50f;  // m/s²
-   static constexpr float ANG_ACCEL = 1.50f;  // rad/s²
+   static constexpr float LIN_ACCEL = 0.35f;  // m/s²
+   static constexpr float ANG_ACCEL = 1.10f;  // rad/s²
    if (fabsf(cmd_lin) < 0.01f && fabsf(cmd_ang) < 0.01f) {
        ramp_lin = 0.0f; ramp_ang = 0.0f;  // snap to zero on stop
    } else {
@@ -788,30 +788,38 @@ of continued motion after the stop key is pressed.
        ramp_ang += constrain(cmd_ang - ramp_ang, -ANG_ACCEL*dt, ANG_ACCEL*dt);
    }
    ```
-   Tuning ranges: LIN_ACCEL 0.30–0.80 m/s², ANG_ACCEL 1.00–2.00 rad/s².
+   Tuning ranges: LIN_ACCEL 0.25–0.60 m/s², ANG_ACCEL 0.80–1.50 rad/s².
    Too low = sluggish feel. Too high = startup punch returns.
 
-3. **Integral preseed** on rest→move transition. The ramp's first step (e.g., 0.016 m/s =
-   0.49 rad/s wheel) only produces ~15 PWM from the P term — below motor deadband. Without
-   preseed, the integral winds up slowly then lurches. Preseed sets integral so that
-   `Kp×error + Ki×integral = 70 PWM` on the very first tick, starting the motor immediately
-   and gently.
+3. **Integral preseed** on rest→move transition. The ramp's first step only produces ~5–15 PWM
+   from the P term — below motor deadband (~45 PWM). Preseed sets integral so that
+   `Kp×error + Ki×integral = START_PWM_SEED` on the first tick, starting the motor cleanly.
    ```cpp
+   static constexpr float START_PWM_SEED = 55.0f;
    // Fires only when pid.target was ~0 and new target is non-zero
    if (fabsf(p.target) < 0.01f && fabsf(nt) > 0.01f) {
        float s = (nt > 0) ? 1.0f : -1.0f;
-       p.integral = constrain(s * (70.0f - KP * fabsf(nt)) / KI, -KI_MAX, KI_MAX);
+       p.integral = constrain(s * (START_PWM_SEED - KP * fabsf(nt)) / KI, -KI_MAX, KI_MAX);
    }
    ```
 
-**Tuning values that felt right (2026-05-15):**
+4. **PWM slew limiter** (`PWM_SLEW_PER_TICK = 8`): caps motor PWM change at ±8 per 33ms tick
+   after the PID output. Prevents abrupt mid-drive PWM jumps from noise spikes or fast target
+   changes. Snaps to zero immediately when PID returns 0 (coast-to-stop still crisp).
+
+5. **Reversal coast + no-active-braking** in `pid_compute`: if a wheel is rolling >0.8 rad/s
+   in the opposite direction of the new target, coast instead of fighting it (prevents reverse
+   kick). If PID output would oppose the target wheel direction (overshoot), return 0 instead
+   of actively braking (prevents overcorrection bounce).
+
+**Final tuned values (2026-05-15):**
 - VEL_ALPHA = 0.2 (do not increase — higher alpha lets more noise through)
-- LIN_ACCEL = 0.50 m/s² (0.30 felt sluggish, 0.50 felt responsive)
-- ANG_ACCEL = 1.50 rad/s² (1.00 felt sluggish, 1.50 felt responsive)
+- LIN_ACCEL = 0.35 m/s², ANG_ACCEL = 1.10 rad/s² (felt right after iterative tuning)
+- START_PWM_SEED = 55 PWM, PWM_SLEW_PER_TICK = 8, REVERSAL_COAST_VEL = 0.8 rad/s
 
 **Permanent hardware fix (not yet done):** Solder 100 nF ceramic caps from GPIO40 to GND and
 GPIO41 to GND at the ESP32 headers. This removes the EMI noise at source and eliminates the
 need for the EMA filter entirely.
 
 **Files changed:**
-- `src/esp32_microros/src/main.cpp` — EMA filter, command ramp, snap-to-zero stop, integral preseed
+- `src/esp32_microros/src/main.cpp` — EMA filter, command ramp, snap-to-zero stop, integral preseed, PWM slew, reversal coast, no-active-braking
