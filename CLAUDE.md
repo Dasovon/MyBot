@@ -15,8 +15,9 @@ ROS 2 Humble differential drive robot. RPi 4 + Arduino Nano (production stack). 
   - Robot stack launches with `mybot-launch` ✅
   - PID: Kp=30, Ki=150, KI_MAX=1.0, Kd=0
 - **Waveshare 2.42" OLED display** ✅ WORKING (2026-05-15):
-  - `oled-display.service` ENABLED and running at boot
-  - Root cause of "dark display": RPi.GPIO requires user to be in `gpio`/`spi` groups — without group membership, GPIO scripts run silently with no errors but pins never change state. Looks identical to hardware failure.
+  - `oled-display.service` ENABLED, running as `ryan`, survives cold power cycle
+  - Root cause of "dark display": RPi.GPIO requires user to be in `gpio`/`spi` groups — without group membership, GPIO scripts run silently with no errors but pins never change state.
+  - Cold-boot fix: dummy SPI byte before init primes the kernel SPI controller (first transaction after fresh cold open is unreliable)
   - Fix: `sudo usermod -aG gpio,spi,i2c,dialout ryan` + log out/in
 
 ### Next steps
