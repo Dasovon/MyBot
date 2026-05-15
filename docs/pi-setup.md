@@ -314,7 +314,61 @@ journalctl -u oled-display -f
 
 ---
 
-## 16. Restore SLAM Map
+## 16. Robot Stack Auto-Launch Service
+
+This service starts `micro_ros_agent` and the full sensor stack automatically at boot — no manual
+`mybot-launch` needed. Create it after the robot stack is working correctly with `mybot-launch`.
+
+```bash
+sudo nano /etc/systemd/system/robot-launch.service
+```
+
+Paste:
+```ini
+[Unit]
+Description=Robot Launch (micro_ros_agent + sensors)
+After=network.target
+
+[Service]
+Type=simple
+User=ryan
+Environment="PYTHONUNBUFFERED=1"
+ExecStartPre=/bin/bash -c "sudo fuser -k /dev/ttyACM0 2>/dev/null; sleep 5"
+ExecStart=/bin/bash -c "source /opt/ros/humble/setup.bash && source /home/ryan/mybot_ws/install/setup.bash && source /home/ryan/microros_ws/install/setup.bash && ros2 launch articubot_one launch_robot.launch.py"
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`ExecStartPre` kills any stale process holding `/dev/ttyACM0` and waits 5 s for network to settle.
+`Restart=on-failure` (not `always`) — does not restart on clean exit (e.g., intentional stop).
+
+Enable and start:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable robot-launch
+sudo systemctl start robot-launch
+sudo systemctl status robot-launch
+```
+
+Monitor logs:
+```bash
+journalctl -u robot-launch -f
+```
+
+**Boot sequence (fully automatic):**
+1. Pi boots → `robot-launch.service` starts (5 s delay) → `micro_ros_agent` listening on `/dev/ttyACM0`
+2. `oled-display.service` starts (5 s delay) → begins 30 s restart cycle
+3. ESP32 boots → pings for 30 s → resets via watchdog if no agent → on next boot finds agent → connects
+4. Display shows `BAT / VEL / TELEOP` within ~35 s of ESP32 connecting
+
+No manual intervention needed after power-on.
+
+---
+
+## 17. Restore SLAM Map
 
 Copy the saved map from the dev machine or backup:
 
@@ -325,7 +379,7 @@ scp ryan@dev:~/mybot_ws/maps/my_map.* ~/mybot_ws/maps/
 
 ---
 
-## 17. Verify Everything
+## 18. Verify Everything
 
 ### Check SPI devices exist
 ```bash
@@ -349,6 +403,13 @@ Expected output: micro_ros_agent connects, `/diff_cont/odom`, `/imu/imu`, `/batt
 sudo systemctl status oled-display
 ```
 
+### Check robot-launch service
+```bash
+sudo systemctl status robot-launch
+```
+
+Expected: `active (running)` — if failed, check `journalctl -u robot-launch -n 20`.
+
 ---
 
 ## Files Not in Git (must recreate manually)
@@ -356,6 +417,7 @@ sudo systemctl status oled-display
 | File | Purpose |
 |------|---------|
 | `/etc/systemd/system/oled-display.service` | OLED display boot service |
+| `/etc/systemd/system/robot-launch.service` | Auto-launch robot stack at boot |
 | `/etc/sudoers.d/ryan` | Passwordless sudo |
 | `/etc/udev/rules.d/99-mybot.rules` | Device symlinks |
 | `~/mybot_ws/maps/my_map.pgm` + `.yaml` | Saved SLAM map |
@@ -426,6 +488,18 @@ If you want immediate data without waiting for the auto-restart cycle:
 ```bash
 sudo systemctl restart oled-display   # after mybot-launch is running
 ```
+
+### ESP32 not reconnecting after Pi reboot (requires manual reset button)
+HWCDC (native USB) gets into an inconsistent state when the Linux USB host re-enumerates during
+reboot. The ESP32 enters WAITING state but `rmw_uros_ping_agent()` always times out because the
+USB CDC layer is confused.
+
+**Self-healing fix (built into firmware):** if in WAITING state for > 30 s with no agent,
+`esp_restart()` is called. This fully reinitializes the USB peripheral — the host picks up a
+fresh `/dev/ttyACM0` and micro_ros_agent reconnects automatically.
+
+**No action needed** — just power-cycle or reboot normally. With `robot-launch.service` running,
+the full boot sequence is automatic (see §16).
 
 ### luma.oled — do not use
 luma.oled's `ssd1309` class is an empty alias for `ssd1306`. It sends the SSD1306 charge pump

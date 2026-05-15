@@ -20,6 +20,10 @@ ROS 2 Humble differential drive robot. RPi 4 + Arduino Nano (production stack). 
   - Root cause of "dark display": RPi.GPIO requires gpio/spi groups (fix #25 below)
   - Root cause of "BAT -- / AGENT OFFLINE": DDS late-joining timing (fix #27 below)
   - Service uses default FastDDS (SHM+UDP); self-restart loop in node handles timing
+- **Fully automatic boot** ✅ (2026-05-15):
+  - `robot-launch.service` ENABLED — starts micro_ros_agent + sensor stack at boot
+  - ESP32 watchdog: 30 s in WAITING state → `esp_restart()` → USB re-enumerates cleanly (fix #29)
+  - No manual `mybot-launch` or reset button needed after power-on
 
 ### Next steps
 1. Object Tracking with OpenCV (final tutorial chapter)
@@ -627,6 +631,44 @@ Display shows: `BAT 11.43V  0.30A`, `VEL 0.00m/s  0.0r/s`, `TELEOP`.
 - `src/articubot_one/scripts/oled_display_node.py` — added `import os`, `DATA_TIMEOUT = 30.0`,
   `_node_start_t`, and timeout check in `_render()` that calls `os._exit(1)`
 - `/etc/systemd/system/oled-display.service` (Pi only) — no special env vars; default FastDDS
+
+### 29) ESP32 30s WAITING watchdog — esp_restart() on HWCDC reconnect failure (2026-05-15)
+
+**Symptom:** After Pi reboot, ESP32 is stuck in WAITING state and never reconnects to
+micro_ros_agent. Display stays at AGENT OFFLINE. Physical reset button press on ESP32 always fixes it.
+
+**Root cause:** ESP32-S3 HWCDC (native USB) uses the USB CDC peripheral directly. When the Pi
+reboots, the Linux USB host re-enumerates the bus. The CDC endpoint gets into an inconsistent
+state — the ESP32 thinks it's WAITING for the agent, but the USB layer is confused and the
+serial transport never re-establishes. `rmw_uros_ping_agent()` always times out (no valid serial
+connection). `esp_restart()` does a full chip reset which re-initializes the USB peripheral
+cleanly and lets the host re-enumerate a fresh CDC device.
+
+**Fix:** In `WAITING` case, track how long the ESP32 has been waiting. If > 30 s with no agent,
+call `esp_restart()`. This handles the Pi reboot case automatically — ESP32 resets, Pi picks up
+the re-enumerated `/dev/ttyACM0`, micro_ros_agent reconnects.
+
+```cpp
+case WAITING:
+    if (waiting_start == 0) waiting_start = millis();
+    if (rmw_uros_ping_agent(500, 3) == RMW_RET_OK) {
+        waiting_start = 0;
+        // ... create entities, go to CONNECTED ...
+    } else if (millis() - waiting_start > 30000) {
+        log("[esp32_robot] no agent for 30s — restarting\n");
+        esp_restart();
+    }
+    break;
+```
+
+Also zeroed `waiting_start = 0` in the CONNECTED→WAITING transition so the timer resets on
+each agent loss, not just on power-up.
+
+**Boot sequence (fully automatic):** Pi boots → robot-launch.service starts micro_ros_agent →
+ESP32 pings, finds agent, connects → display shows TELEOP within ~35 s. No manual button press.
+
+**Files changed:**
+- `src/esp32_microros/src/main.cpp` — added `waiting_start`, watchdog in WAITING case
 
 ### 28) OLED cold-boot SPI init — close+reopen fix (2026-05-15)
 
