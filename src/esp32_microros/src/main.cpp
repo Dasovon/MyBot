@@ -286,6 +286,7 @@ void setup() {
 
 // ── Loop timers ───────────────────────────────────────────────────────
 static uint32_t t_control = 0;
+static uint8_t  log_tick  = 0;   // throttle telnet logs to 1 Hz (every 30 control ticks)
 static uint32_t t_battery = 0;
 static uint32_t t_ping    = 0;
 
@@ -376,8 +377,11 @@ void loop() {
                 int pwm_r = slew_pwm(pid_compute(pid_r, vel_r_filt, dt), last_pwm_r);
                 motor_set(PWMB_CH, BIN1, BIN2, pwm_l);
                 motor_set(PWMA_CH, AIN1, AIN2, pwm_r);
-                log("[enc] tgt=%.2f/%.2f act=%.2f/%.2f filt=%.2f/%.2f\n",
-                    pid_l.target, pid_r.target, vel_l, vel_r, vel_l_filt, vel_r_filt);
+                if (++log_tick >= 30) {
+                    log_tick = 0;
+                    log("[enc] tgt=%.2f/%.2f act=%.2f/%.2f filt=%.2f/%.2f\n",
+                        pid_l.target, pid_r.target, vel_l, vel_r, vel_l_filt, vel_r_filt);
+                }
 
                 float dist_l = (float)dl * COUNTS_TO_RAD * WHEEL_RADIUS;
                 float dist_r = (float)dr * COUNTS_TO_RAD * WHEEL_RADIUS;
