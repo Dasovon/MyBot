@@ -78,7 +78,7 @@ class OledDisplayNode(Node):
 
             self._spi = spidev.SpiDev()
             self._spi.open(0, 0)
-            self._spi.max_speed_hz = 1000000
+            self._spi.max_speed_hz = 100000
             self._spi.mode = 0b11
 
             # Hardware reset — RST is already LOW from setup above
