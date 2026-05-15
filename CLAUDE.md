@@ -627,3 +627,32 @@ Display shows: `BAT 11.43V  0.30A`, `VEL 0.00m/s  0.0r/s`, `TELEOP`.
 - `src/articubot_one/scripts/oled_display_node.py` — added `import os`, `DATA_TIMEOUT = 30.0`,
   `_node_start_t`, and timeout check in `_render()` that calls `os._exit(1)`
 - `/etc/systemd/system/oled-display.service` (Pi only) — no special env vars; default FastDDS
+
+### 28) OLED cold-boot SPI init — close+reopen fix (2026-05-15)
+
+**Symptom:** After cold boot or reboot, display shows nothing. "Display init OK" logged but screen blank.
+Works fine after manual `sudo systemctl restart oled-display`. Display works because OLED GDDRAM holds
+its content as long as 3.3V is present, so screen looks "frozen" during reboot rather than going dark.
+
+**Root cause:** On first kernel boot, opening `/dev/spidev0.0` for the first time doesn't fully apply
+the mode/speed configuration. The single dummy write (with RST=LOW, display ignoring it) was not
+enough to settle the kernel SPI controller. All subsequent init commands were silently malformed —
+"Display init OK" logged because no exception was thrown, but GDDRAM writes never rendered.
+
+**Fix:** Close and reopen the SPI device after the dummy write. This forces the kernel to fully
+re-apply the mode and speed config before the real init sequence runs.
+
+```python
+self._spi.writebytes([0x00])
+time.sleep(0.1)
+self._spi.close()
+self._spi.open(0, 0)
+self._spi.max_speed_hz = 100000
+self._spi.mode = 0b11
+time.sleep(0.05)
+```
+
+**Confirmed:** Display renders correctly on first boot without any manual restart.
+
+**Files changed:**
+- `src/articubot_one/scripts/oled_display_node.py` — dummy write now followed by close+reopen
