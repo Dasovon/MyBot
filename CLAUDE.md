@@ -701,3 +701,32 @@ time.sleep(0.05)
 
 **Files changed:**
 - `src/articubot_one/scripts/oled_display_node.py` — dummy write now followed by close+reopen
+
+### 30) RPLidar startup failure — rplidar_node + 8s TimerAction delay (2026-05-15)
+
+**Symptom:** `rplidar_composition` fails on every service start with `Can not start scan: 80008002!`
+(RESULT_OPERATION_NOT_SUPPORT) or `80008000` (RESULT_OPERATION_TIMEOUT). Lidar motor is spinning
+but the node exits immediately.
+
+**Root cause (80008000):** On cold boot, the lidar motor needs ~8 seconds to reach operating speed
+after the serial port is opened (DTR asserted). `rplidar_composition` launched immediately and timed
+out before the motor was ready.
+
+**Root cause (80008002):** `rplidar_composition` with SDK 2.0.0 tries to call `SET_MOTOR_PWM` which
+the A1 M8 does not support (it uses DTR-based motor control only). `rplidar_node` auto-detects
+the correct motor control method and scan mode.
+
+**What did NOT work:**
+- Python serial STOP+RESET (0xA5 0x25 / 0xA5 0x40) — didn't clear state
+- Toggling `/sys/bus/usb/devices/1-1.2/authorized` — caused hub-wide USB disruption,
+  knocked RealSense off the bus; required camera replug to recover
+
+**Fix:**
+1. Switch `rplidar.launch.py` from `rplidar_composition` to `rplidar_node`, remove `scan_mode`
+   param (auto-detects Express mode at 4kHz/10Hz on A1 M8).
+2. Wrap lidar launch in `TimerAction(period=8.0, ...)` in `launch_robot.launch.py` so the motor
+   has time to spin up before the node connects.
+
+**Files changed:**
+- `src/articubot_one/launch/rplidar.launch.py` — `rplidar_composition` → `rplidar_node`, removed `scan_mode`
+- `src/articubot_one/launch/launch_robot.launch.py` — `TimerAction(8s)` wrapping lidar launch
