@@ -1,0 +1,384 @@
+# Raspberry Pi Setup — Full Restore Guide
+
+Complete procedure for setting up the Pi from a blank SD card to a fully running robot stack.
+Validated 2026-05-14 after full Ubuntu 22.04.5 reflash.
+
+---
+
+## 1. Flash SD Card
+
+1. Download **Ubuntu Server 22.04.5 LTS (64-bit)** for Raspberry Pi from ubuntu.com
+2. Flash with **Raspberry Pi Imager**:
+   - Click the gear icon before writing
+   - Set hostname: `mybot`
+   - Enable SSH → use password authentication
+   - Set username: `ryan`, password: `0508`
+   - Configure WiFi (SSID: `FBI-Van`, password in credentials.h)
+3. Insert SD card and boot Pi
+
+---
+
+## 2. Find Pi on Network
+
+```bash
+ping mybot.local
+# or check router DHCP table — Pi registers as "mybot"
+```
+
+SSH in for the first time:
+```bash
+ssh ryan@mybot
+# accept fingerprint, password: 0508
+```
+
+---
+
+## 3. Update System
+
+```bash
+sudo apt update && sudo apt upgrade -y
+sudo reboot
+```
+
+---
+
+## 4. Install ROS 2 Humble
+
+```bash
+sudo apt install -y software-properties-common
+sudo add-apt-repository universe
+sudo apt update && sudo apt install -y curl
+sudo curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+  -o /usr/share/keyrings/ros-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] \
+  http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" \
+  | sudo tee /etc/apt/sources.list.d/ros2.list
+sudo apt update
+sudo apt install -y ros-humble-ros-base ros-dev-tools
+sudo apt install -y ros-humble-twist-mux ros-humble-robot-localization \
+  ros-humble-rplidar-ros ros-humble-realsense2-camera ros-humble-realsense2-description
+```
+
+---
+
+## 5. Clone and Build Workspace
+
+```bash
+mkdir -p ~/mybot_ws/src && cd ~/mybot_ws/src
+git clone https://github.com/Dasovon/MyBot.git articubot_one
+git clone -b humble https://github.com/joshnewans/diffdrive_arduino.git
+git clone -b newans_ros2 https://github.com/joshnewans/serial.git
+
+cd ~/mybot_ws
+source /opt/ros/humble/setup.bash
+rosdep install --from-paths src --ignore-src -r -y
+colcon build --symlink-install
+```
+
+---
+
+## 6. Build micro-ROS Agent from Source
+
+`ros-humble-micro-ros-agent` is not in apt for arm64. Must build from source.
+
+```bash
+mkdir -p ~/microros_ws/src && cd ~/microros_ws
+git clone -b humble https://github.com/micro-ROS/micro_ros_setup.git src/micro_ros_setup
+source /opt/ros/humble/setup.bash
+rosdep install --from-paths src --ignore-src -r -y
+colcon build --symlink-install
+source install/setup.bash
+
+ros2 run micro_ros_setup create_agent_ws.sh
+ros2 run micro_ros_setup build_agent.sh
+```
+
+Takes ~10–15 minutes on Pi 4.
+
+---
+
+## 7. Build librealsense with RSUSB Backend
+
+The apt version uses the kernel UVC driver which causes `xioctl(UVCIOC_CTRL_QUERY)` timeouts that
+break the RealSense color stream. Must build from source with `-DFORCE_RSUSB_BACKEND=ON`.
+
+```bash
+sudo apt remove ros-humble-librealsense2* -y
+sudo apt install -y libusb-1.0-0-dev libssl-dev cmake libgtk-3-dev
+
+git clone https://github.com/IntelRealSense/librealsense ~/librealsense
+cd ~/librealsense && git checkout v2.56.4
+mkdir build && cd build
+cmake .. -DFORCE_RSUSB_BACKEND=ON -DBUILD_EXAMPLES=OFF \
+  -DBUILD_GRAPHICAL_EXAMPLES=OFF -DCMAKE_BUILD_TYPE=Release
+make -j2    # NOT -j4 — Pi 4 OOMs with 4 jobs
+sudo make install && sudo ldconfig
+
+# Reinstall ROS RealSense packages (they link against librealsense)
+sudo apt install -y ros-humble-realsense2-camera ros-humble-realsense2-description
+
+# Override the apt .so with the RSUSB build (ROS prepends its lib path — LD_LIBRARY_PATH won't work)
+sudo cp /usr/local/lib/librealsense2.so.2.56.4 \
+  /opt/ros/humble/lib/aarch64-linux-gnu/librealsense2.so.2.56.4
+```
+
+Takes ~45–60 minutes on Pi 4.
+
+---
+
+## 8. udev Rules
+
+```bash
+sudo nano /etc/udev/rules.d/99-mybot.rules
+```
+
+Paste:
+```
+# RPLidar A1 (CP2102)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", SYMLINK+="rplidar"
+
+# Arduino Nano (CH340)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", SYMLINK+="arduino"
+```
+
+Apply:
+```bash
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+---
+
+## 9. Enable SPI
+
+**Note: `raspi-config` is not available on Ubuntu — edit the config file directly.**
+
+```bash
+grep -q "dtparam=spi=on" /boot/firmware/config.txt || \
+  echo "dtparam=spi=on" | sudo tee -a /boot/firmware/config.txt
+sudo reboot
+```
+
+After reboot, verify:
+```bash
+ls /dev/spidev*
+# should show: /dev/spidev0.0  /dev/spidev0.1
+```
+
+---
+
+## 10. Python Packages for OLED Display
+
+```bash
+sudo apt install -y python3-spidev python3-rpi.gpio python3-gpiozero python3-pil
+```
+
+---
+
+## 11. User Groups — CRITICAL
+
+RPi.GPIO and spidev require the user to be in the correct groups. **Without this, GPIO/SPI scripts
+run silently with no errors but pins never actually change state** — this will look exactly like a
+hardware failure and is extremely difficult to diagnose.
+
+```bash
+sudo usermod -aG gpio,spi,i2c,dialout ryan
+```
+
+**Then log out and log back in** — group changes do not take effect in the current session:
+```bash
+exit
+ssh ryan@mybot
+# verify:
+groups
+# should include: gpio spi i2c dialout
+```
+
+### How to verify groups are working
+
+Run this without sudo — if GPIO25 reads ~3.3V, groups are active:
+```bash
+python3 - << 'EOF'
+import RPi.GPIO as GPIO, time
+GPIO.setwarnings(False)
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(25, GPIO.OUT)
+GPIO.output(25, GPIO.HIGH)
+time.sleep(5)
+GPIO.output(25, GPIO.LOW)
+GPIO.cleanup()
+EOF
+```
+
+Probe Pi pin 22 to GND with a multimeter. Should read ~3.3V during the 5-second window.
+If it reads near 0V, you're either missing a group or haven't re-logged in yet.
+
+### Why sudo isn't the answer
+
+The oled-display.service runs as user `ryan` (not root). If you rely on sudo, the systemd service
+will fail. The group membership approach is correct — sudo is only needed for system admin tasks.
+
+---
+
+## 12. Passwordless Sudo
+
+Required for the `mybot-launch` alias and some robot bringup scripts:
+
+```bash
+echo "ryan ALL=(ALL) NOPASSWD: ALL" | sudo tee /etc/sudoers.d/ryan
+sudo chmod 440 /etc/sudoers.d/ryan
+```
+
+---
+
+## 13. SSH Key from Dev Machine
+
+Run this on the **dev machine** (not Pi) to install your SSH key:
+
+```bash
+ssh-copy-id ryan@mybot
+```
+
+After this, SSH from the dev machine no longer requires a password.
+
+If re-flashing and getting a host key mismatch error:
+```bash
+ssh-keygen -f ~/.ssh/known_hosts -R mybot
+ssh-keygen -f ~/.ssh/known_hosts -R 192.168.86.33
+```
+
+---
+
+## 14. .bashrc Setup
+
+```bash
+cat >> ~/.bashrc << 'EOF'
+
+source /opt/ros/humble/setup.bash
+source ~/mybot_ws/install/setup.bash
+source ~/microros_ws/install/setup.bash
+export ROS_DOMAIN_ID=0
+
+alias mybot-launch='sudo fuser -k /dev/ttyACM0 2>/dev/null; source ~/microros_ws/install/setup.bash && ros2 launch articubot_one launch_robot.launch.py'
+EOF
+source ~/.bashrc
+```
+
+---
+
+## 15. OLED Display systemd Service
+
+The service file lives on the Pi only (not in git). Create it after verifying the display works:
+
+```bash
+sudo nano /etc/systemd/system/oled-display.service
+```
+
+Paste:
+```ini
+[Unit]
+Description=OLED Display Node
+After=network.target
+
+[Service]
+User=ryan
+Environment="HOME=/home/ryan"
+ExecStart=/bin/bash -c 'source /opt/ros/humble/setup.bash && source /home/ryan/mybot_ws/install/setup.bash && ros2 run articubot_one oled_display_node.py'
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable and start:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable oled-display
+sudo systemctl start oled-display
+sudo systemctl status oled-display
+```
+
+Monitor logs:
+```bash
+journalctl -u oled-display -f
+```
+
+---
+
+## 16. Restore SLAM Map
+
+Copy the saved map from the dev machine or backup:
+
+```bash
+mkdir -p ~/mybot_ws/maps
+scp ryan@dev:~/mybot_ws/maps/my_map.* ~/mybot_ws/maps/
+```
+
+---
+
+## 17. Verify Everything
+
+### Check SPI devices exist
+```bash
+ls /dev/spidev*
+```
+
+### Check udev symlinks after plugging in hardware
+```bash
+ls /dev/rplidar /dev/ttyACM0
+```
+
+### Launch robot stack (without lidar/camera connected — they crash gracefully)
+```bash
+mybot-launch
+```
+
+Expected output: micro_ros_agent connects, `/diff_cont/odom`, `/imu/imu`, `/battery_state` publishing.
+
+### Check OLED service
+```bash
+sudo systemctl status oled-display
+```
+
+---
+
+## Files Not in Git (must recreate manually)
+
+| File | Purpose |
+|------|---------|
+| `/etc/systemd/system/oled-display.service` | OLED display boot service |
+| `/etc/sudoers.d/ryan` | Passwordless sudo |
+| `/etc/udev/rules.d/99-mybot.rules` | Device symlinks |
+| `~/mybot_ws/maps/my_map.pgm` + `.yaml` | Saved SLAM map |
+| `~/microros_ws/` | micro-ROS agent (built from source) |
+| `~/librealsense/` | librealsense source build |
+
+---
+
+## Common Issues
+
+### SSH host key mismatch after reflash
+```bash
+ssh-keygen -f ~/.ssh/known_hosts -R mybot
+ssh-keygen -f ~/.ssh/known_hosts -R 192.168.86.33
+```
+
+### GPIO/SPI works with sudo but fails without it
+Groups not active in current session. Log out and back in after `usermod -aG`.
+
+### RealSense color stream fails (xioctl timeout)
+librealsense was installed from apt (kernel UVC backend). Rebuild from source with `FORCE_RSUSB_BACKEND=ON` per section 7. The D435 may also need a physical replug after Pi reboot.
+
+### micro_ros_agent not found
+`source ~/microros_ws/install/setup.bash` missing. Add to `.bashrc` (section 14) or the mybot-launch alias handles it.
+
+### Display shows all-white and freezes
+Init sequence sent `0xA5` (all-pixels-on) and never sent `0xA4` (resume-to-GDDRAM). The node clears this on first render — if it persists, check that `oled_display_node.py` does NOT have the old debug `0xA5` line in `_init_display`.
+
+### SPI device not found (`/dev/spidev0.0` missing)
+SPI not enabled. Check `/boot/firmware/config.txt` for `dtparam=spi=on`, reboot.
+
+### luma.oled — do not use
+luma.oled's `ssd1309` class is an empty alias for `ssd1306`. It sends the SSD1306 charge pump
+command `0x8D 0x14` which is undefined on the SSD1309 and corrupts initialization silently.
+Use spidev + RPi.GPIO directly as in `oled_display_node.py`.
