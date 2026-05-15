@@ -100,9 +100,8 @@ class OledDisplayNode(Node):
             self._cmd(0xDA); self._cmd(0x12)
             self._cmd(0xDB); self._cmd(0x40)
             time.sleep(0.1)
+            self._cmd(0xA4)   # Resume to GDDRAM content
             self._cmd(0xAF)   # Display ON
-            self._cmd(0xA5)   # Entire display ON (all pixels lit via command — bypasses GDDRAM)
-            time.sleep(0.5)   # hold so result is visible at boot
 
             self._font = ImageFont.truetype(FONT_PATH, FONT_SIZE)
             self.get_logger().info('Display init OK')
