@@ -81,6 +81,12 @@ class OledDisplayNode(Node):
             self._spi.max_speed_hz = 100000
             self._spi.mode = 0b11
 
+            # Dummy write — primes the SPI controller on cold boot.
+            # The first transaction after a fresh kernel SPI init is unreliable;
+            # this sacrificial byte settles it. RST is LOW so display ignores it.
+            self._spi.writebytes([0x00])
+            time.sleep(0.05)
+
             # Hardware reset — RST is already LOW from setup above
             time.sleep(0.1)                       # hold in reset
             GPIO.output(RST_PIN, GPIO.HIGH); time.sleep(0.1)
@@ -102,8 +108,8 @@ class OledDisplayNode(Node):
             self._cmd(0xDB); self._cmd(0x40)  # VCOMH deselect level
             self._cmd(0x81); self._cmd(0x7F)  # contrast
             self._cmd(0xAF)          # display ON
-            self._cmd(0xA5)          # all pixels ON — diagnostic + warmup
-            time.sleep(5.0)          # hold 5s — visible at boot to confirm display alive
+            self._cmd(0xA5)          # all pixels ON — warmup
+            time.sleep(1.0)
             self._cmd(0xA4)          # resume to GDDRAM content
 
             self._font = ImageFont.truetype(FONT_PATH, FONT_SIZE)
