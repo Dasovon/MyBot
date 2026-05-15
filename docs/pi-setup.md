@@ -280,8 +280,10 @@ Description=OLED Display Node
 After=network.target
 
 [Service]
+Type=simple
 User=ryan
-Environment="HOME=/home/ryan"
+Environment="PYTHONUNBUFFERED=1"
+ExecStartPre=/bin/sleep 5
 ExecStart=/bin/bash -c "source /opt/ros/humble/setup.bash && source /home/ryan/mybot_ws/install/setup.bash && ros2 run articubot_one oled_display_node.py"
 Restart=always
 RestartSec=5
@@ -289,6 +291,8 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 ```
+
+`ExecStartPre=/bin/sleep 5` is required — gives the SPI subsystem time to be ready before the node starts.
 
 Enable and start:
 ```bash
@@ -372,8 +376,29 @@ librealsense was installed from apt (kernel UVC backend). Rebuild from source wi
 ### micro_ros_agent not found
 `source ~/microros_ws/install/setup.bash` missing. Add to `.bashrc` (section 14) or the mybot-launch alias handles it.
 
-### Display shows all-white and freezes
-Init sequence sent `0xA5` (all-pixels-on) and never sent `0xA4` (resume-to-GDDRAM). The node clears this on first render — if it persists, check that `oled_display_node.py` does NOT have the old debug `0xA5` line in `_init_display`.
+### Display works on service restart but dark on cold power cycle
+Three separate cold-boot issues — all must be fixed:
+
+**1. GPIO group membership (most common cause)**
+RPi.GPIO silently does nothing if the user isn't in the gpio/spi/dialout groups. No exceptions
+are thrown. "Display init OK" is logged. The display stays completely dark.
+Diagnosis: probe DC pin (pin 22) to GND with multimeter while running `GPIO.output(25, GPIO.HIGH)`.
+Should read ~3.3V. If it reads ~0.2V, groups are missing or the session predates the `usermod`.
+Fix: `sudo usermod -aG gpio,spi,i2c,dialout ryan` then log out and back in.
+
+**2. SPI controller not primed at cold boot**
+The first SPI transaction after a fresh kernel SPI controller init is unreliable. The init sequence
+runs without errors but commands don't reach the display. Fixed in `oled_display_node.py` with a
+dummy `0x00` byte sent while RST is LOW (display ignores it) before the real init sequence.
+
+**3. SPI speed too high at cold boot**
+1MHz is unreliable while the Pi SPI hardware is still settling at cold boot. Node uses 100kHz.
+
+### Display shows all-white and stays white
+Init sequence sent `0xA5` (all-pixels-on) but the `0xA4` (resume-to-GDDRAM) was missing or
+the addressing mode is wrong. Check that `_init_display` sends `0x20 0x02` (page mode) — not
+`0x20 0x00` (horizontal mode). The `_show()` method uses page addressing commands (`0xB0+page`)
+which only work in page mode.
 
 ### SPI device not found (`/dev/spidev0.0` missing)
 SPI not enabled. Check `/boot/firmware/config.txt` for `dtparam=spi=on`, reboot.

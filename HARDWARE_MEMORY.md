@@ -335,7 +335,17 @@ RST  → GPIO27    (pin 13)
 
 **Driver:** spidev + RPi.GPIO directly. **Do NOT use luma.oled** — its `ssd1309` class is an empty alias for `ssd1306` and sends the SSD1306 charge pump command `0x8D 0x14` (undefined on SSD1309), which corrupts initialization silently.
 
+SPI speed: **100kHz** (`max_speed_hz = 100000`). 1MHz is unreliable at cold boot.
 SPI mode 3 (`sp.mode = 0b11`, CPOL=1, CPHA=1) required by Waveshare module.
+Memory addressing: **page mode** (`0x20 0x02`) — must match `_show()` which uses `0xB0+page` commands.
+
+**Cold-boot init quirks (all three must be handled):**
+1. **GPIO group membership** — RPi.GPIO silently does nothing without `gpio`/`spi`/`dialout` groups.
+   Symptoms: no exceptions, "Display init OK" logged, display completely dark.
+   Diagnosis: probe DC pin (GPIO25/pin 22) with multimeter while running `GPIO.output(25, GPIO.HIGH)` — reads 0.2V instead of 3.3V. Fix: `sudo usermod -aG gpio,spi,i2c,dialout ryan` + log out/in.
+2. **SPI controller priming** — first SPI transaction on a cold kernel init is unreliable.
+   Fix: send dummy `0x00` byte while RST is LOW (display ignores it) before real init sequence.
+3. **Display warmup** — send `0xA5` (all pixels ON) for 1s then `0xA4` (resume GDDRAM) to stabilize.
 
 **Node:** `oled_display_node.py`
 - Subscribes: `/battery_state`, `/diff_cont/odom`, `/odom`, `/navigate_to_pose/_action/status`
@@ -344,9 +354,10 @@ SPI mode 3 (`sp.mode = 0b11`, CPOL=1, CPHA=1) required by Waveshare module.
 - Status line: AGENT OFFLINE / TELEOP / IDLE / NAVIGATING / GOAL REACHED
 
 **Systemd service:** `/etc/systemd/system/oled-display.service` (Pi only, not in git)
-- Starts at boot via `WantedBy=multi-user.target`, before robot launch
+- `User=ryan` — requires ryan to be in gpio/spi/dialout groups (see above)
+- `ExecStartPre=/bin/sleep 5` — wait for SPI subsystem to be ready
 - `Restart=always RestartSec=5`
-- NOT in `launch_robot.launch.py` — systemd service handles it independently
+- NOT in `launch_robot.launch.py` — systemd handles it independently
 
 ```bash
 sudo systemctl status oled-display
@@ -354,7 +365,9 @@ sudo systemctl restart oled-display
 journalctl -u oled-display -f
 ```
 
-**SPI interface verification:** `ls /dev/spidev*` → should show `/dev/spidev0.0`. Enable once via `sudo raspi-config → Interface Options → SPI → Enable`.
+**SPI interface verification:** `ls /dev/spidev*` → should show `/dev/spidev0.0`.
+Enable SPI: `echo "dtparam=spi=on" | sudo tee -a /boot/firmware/config.txt && sudo reboot`
+(raspi-config is not available on Ubuntu 22.04 — edit config.txt directly.)
 
 ---
 
