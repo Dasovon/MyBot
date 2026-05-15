@@ -267,6 +267,38 @@ source ~/.bashrc
 
 ## 15. OLED Display systemd Service
 
+### 15a. FastDDS UDP-only profile
+
+Create `/home/ryan/fastdds_no_shm.xml` on the Pi. This disables FastDDS shared-memory transport for
+the oled node, which is required for the node to appear in `ros2 node list` and for DDS endpoint
+matching to work correctly with micro_ros_agent.
+
+```bash
+cat > ~/fastdds_no_shm.xml << 'EOF'
+<?xml version="1.0" encoding="UTF-8" ?>
+<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <profiles>
+    <transport_descriptors>
+      <transport_descriptor>
+        <transport_id>UDPv4Transport</transport_id>
+        <type>UDPv4</type>
+      </transport_descriptor>
+    </transport_descriptors>
+    <participant profile_name="disable_shm" is_default_ros2_profile="true">
+      <rtps>
+        <userTransports>
+          <transport_id>UDPv4Transport</transport_id>
+        </userTransports>
+        <useBuiltinTransports>false</useBuiltinTransports>
+      </rtps>
+    </participant>
+  </profiles>
+</dds>
+EOF
+```
+
+### 15b. Service file
+
 The service file lives on the Pi only (not in git). Create it after verifying the display works:
 
 ```bash
@@ -283,6 +315,7 @@ After=network.target
 Type=simple
 User=ryan
 Environment="PYTHONUNBUFFERED=1"
+Environment="FASTRTPS_DEFAULT_PROFILES_FILE=/home/ryan/fastdds_no_shm.xml"
 ExecStartPre=/bin/sleep 5
 ExecStart=/bin/bash -c "source /opt/ros/humble/setup.bash && source /home/ryan/mybot_ws/install/setup.bash && ros2 run articubot_one oled_display_node.py"
 Restart=always
@@ -293,6 +326,10 @@ WantedBy=multi-user.target
 ```
 
 `ExecStartPre=/bin/sleep 5` is required — gives the SPI subsystem time to be ready before the node starts.
+
+`FASTRTPS_DEFAULT_PROFILES_FILE` forces UDP-only transport — required for DDS endpoint matching
+with micro_ros_agent. Without it, the node's DDS participant registers as `_NODE_NAME_UNKNOWN_`
+and subscriptions may not match the ESP32 publisher.
 
 Enable and start:
 ```bash
@@ -351,6 +388,7 @@ sudo systemctl status oled-display
 | File | Purpose |
 |------|---------|
 | `/etc/systemd/system/oled-display.service` | OLED display boot service |
+| `~/fastdds_no_shm.xml` | FastDDS UDP-only profile for oled node |
 | `/etc/sudoers.d/ryan` | Passwordless sudo |
 | `/etc/udev/rules.d/99-mybot.rules` | Device symlinks |
 | `~/mybot_ws/maps/my_map.pgm` + `.yaml` | Saved SLAM map |
@@ -402,6 +440,25 @@ which only work in page mode.
 
 ### SPI device not found (`/dev/spidev0.0` missing)
 SPI not enabled. Check `/boot/firmware/config.txt` for `dtparam=spi=on`, reboot.
+
+### Display shows BAT -- / AGENT OFFLINE after boot (data never arrives)
+DDS late-joining timing issue. The oled service starts at boot; the ESP32 connects to micro_ros_agent
+later (after `mybot-launch`). When `micro_ros_agent` creates its DDS publishers for `/battery_state`
+and `/diff_cont/odom`, the oled node's subscriptions fail to match them if the node started before
+the publishers existed.
+
+**Self-healing fix (built into `oled_display_node.py`):** if no battery data is received within 30 s,
+the node calls `os._exit(1)`. Systemd (`Restart=always`, `RestartSec=5`) restarts it. The cycle
+repeats every ~35 s until the robot stack is running and the ESP32 is connected. At that point the
+node starts, finds live publishers immediately, and stays up.
+
+**No action needed** — this is automatic. Just boot the Pi, then run `mybot-launch` as normal. The
+oled node will show data within 35 s of the ESP32 connecting.
+
+If you want immediate data without waiting for the auto-restart cycle:
+```bash
+sudo systemctl restart oled-display   # after mybot-launch is running
+```
 
 ### luma.oled — do not use
 luma.oled's `ssd1309` class is an empty alias for `ssd1306`. It sends the SSD1306 charge pump

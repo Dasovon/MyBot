@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import math
+import os
 import socket
 import time
 
@@ -26,6 +27,8 @@ RST_PIN = 27
 WIDTH = 128
 HEIGHT = 64
 
+DATA_TIMEOUT = 30.0  # seconds to wait for ESP32 data before restarting
+
 BEST_EFFORT_QOS = QoSProfile(
     depth=10,
     reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -50,6 +53,7 @@ class OledDisplayNode(Node):
         self._pos_yaw = None
         self._last_odom_t = 0.0
         self._nav_status = 'UNKNOWN'
+        self._node_start_t = time.monotonic()
 
         self.create_subscription(BatteryState, '/battery_state', self._battery_cb, BEST_EFFORT_QOS)
         self.create_subscription(Odometry, '/diff_cont/odom', self._drive_odom_cb, BEST_EFFORT_QOS)
@@ -180,6 +184,12 @@ class OledDisplayNode(Node):
     def _render(self):
         if self._spi is None:
             return
+
+        # No ESP32 data yet — DDS endpoint matching requires both sides running simultaneously.
+        # Exit so systemd restarts us; retry until the robot stack is live.
+        if self._battery_voltage is None and (time.monotonic() - self._node_start_t) > DATA_TIMEOUT:
+            self.get_logger().warn('No ESP32 data in 30s — restarting to renegotiate DDS')
+            os._exit(1)
 
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

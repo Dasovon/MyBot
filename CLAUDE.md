@@ -14,11 +14,12 @@ ROS 2 Humble differential drive robot. RPi 4 + Arduino Nano (production stack). 
   - Subscribes: `/diff_cont/cmd_vel_unstamped`
   - Robot stack launches with `mybot-launch` ✅
   - PID: Kp=30, Ki=150, KI_MAX=1.0, Kd=0
-- **Waveshare 2.42" OLED display** ✅ WORKING (2026-05-15):
+- **Waveshare 2.42" OLED display** ✅ FULLY WORKING (2026-05-15):
   - `oled-display.service` ENABLED, running as `ryan`, survives cold power cycle
-  - Root cause of "dark display": RPi.GPIO requires user to be in `gpio`/`spi` groups — without group membership, GPIO scripts run silently with no errors but pins never change state.
-  - Cold-boot fix: dummy SPI byte before init primes the kernel SPI controller (first transaction after fresh cold open is unreliable)
-  - Fix: `sudo usermod -aG gpio,spi,i2c,dialout ryan` + log out/in
+  - Shows: IP, battery V/A, velocity, position, nav status — all data from ESP32
+  - Root cause of "dark display": RPi.GPIO requires gpio/spi groups (fix #25 below)
+  - Root cause of "BAT -- / AGENT OFFLINE": DDS late-joining timing (fix #27 below)
+  - Service uses `FASTRTPS_DEFAULT_PROFILES_FILE=~/fastdds_no_shm.xml` (UDP-only transport)
 
 ### Next steps
 1. Object Tracking with OpenCV (final tutorial chapter)
@@ -590,3 +591,38 @@ if (fabsf(p.target) < 0.01f) { p.integral = 0.0f; p.prev_err = 0.0f; return 0; }
 ```
 
 Teleop validated: forward, left/right turns, and combined arc all stable. Driven via `teleop_twist_keyboard` on dev machine.
+
+### 27) OLED display subscriptions (BAT -- / AGENT OFFLINE) — DDS timing fix (2026-05-15)
+
+**Symptom:** OLED display hardware works (shows IP, renders frames) but all data fields show `--`
+and status shows `AGENT OFFLINE`. Occurs every boot — display worked only if oled service restarted
+manually after `mybot-launch`.
+
+**Root cause:** DDS late-joining publisher timing. The oled service starts at boot (ExecStartPre=5s
+delay). The ESP32 connects to micro_ros_agent later (after `mybot-launch` is run). When micro_ros_agent
+creates DDS publishers for `/battery_state`, `/diff_cont/odom`, etc., the oled node's subscriptions
+were already created in a DDS universe where those publishers didn't exist. FastDDS SHM transport
+made endpoint re-negotiation fail silently for late-joining publishers from micro_ros_agent.
+
+**Diagnostic path:**
+1. `ros2 topic info /battery_state -v --no-daemon` → oled subscription not listed (Subscription count: 0)
+2. `ros2 topic echo /battery_state --no-daemon` (with fastdds_no_shm.xml) → received data fine
+3. Restarting oled service WHILE ESP32 was connected → callbacks fired immediately (11.50V at 116ms)
+4. Confirmed: the node matching works, but only when it starts after the publishers are live.
+
+**Two-part fix:**
+
+1. **FastDDS UDP-only transport** (`~/fastdds_no_shm.xml`): disables shared-memory transport.
+   Set in service via `FASTRTPS_DEFAULT_PROFILES_FILE=/home/ryan/fastdds_no_shm.xml`.
+   Required for the node to appear in `ros2 node list` and for DDS endpoint matching to work.
+
+2. **Self-restart on data timeout** in `oled_display_node.py`: if `_battery_voltage` is still None
+   after 30 seconds, calls `os._exit(1)`. Systemd (`Restart=always`, `RestartSec=5`) restarts the
+   node. Repeats every ~35 s until `mybot-launch` is running and the ESP32 is connected. At that
+   point the node starts and finds live publishers immediately — callbacks fire within milliseconds.
+
+**Files changed:**
+- `src/articubot_one/scripts/oled_display_node.py` — added `DATA_TIMEOUT = 30.0`, `_node_start_t`,
+  and timeout check in `_render()` that calls `os._exit(1)`
+- `/home/ryan/fastdds_no_shm.xml` (Pi only) — UDP-only FastDDS profile (see docs/pi-setup.md §15a)
+- `/etc/systemd/system/oled-display.service` (Pi only) — added `FASTRTPS_DEFAULT_PROFILES_FILE` env
