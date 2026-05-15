@@ -8,75 +8,56 @@ ROS 2 Humble differential drive robot. RPi 4 + Arduino Nano (production stack). 
 ### Current state (2026-05-14)
 - Nav2 autonomous navigation ✅ working (saved map at `~/mybot_ws/maps/my_map`)
 - RealSense D435 ✅ color + depth 640×480@15fps (RSUSB backend, fix #18)
-- **ESP32-S3 full firmware validated and driving** (`feature/esp32-microros`):
-  - Hardware: ESP32-S3-DevKitC-1 + Lonely Binary expansion base
-  - WiFi OTA working — `pio run -e esp32-s3-ota --target upload`
-  - Wireless monitor: `nc esp32-mybot.local 23`
+- **Pi fully restored after reflash** ✅ (2026-05-14): ROS Humble, mybot_ws, microros_ws, librealsense RSUSB, udev rules, SLAM map — all restored. Pi IP: 192.168.86.33
+- **ESP32-S3 full firmware validated and driving**:
   - Publishes: `/diff_cont/odom` (30Hz), `/imu/imu` (30Hz), `/battery_state` (1Hz)
   - Subscribes: `/diff_cont/cmd_vel_unstamped`
-  - **Pi launch migrated**: `launch_robot.launch.py` now runs micro_ros_agent instead of ros2_control/bno055/ina219
-  - **Teleop validated** ✅: forward, left turn, right turn, combined arc — all stable, no jolting
-  - PID: Kp=30, Ki=150, KI_MAX=1.0, Kd=0. Coasts to stop on zero target (no hard braking).
-  - Motor assignment: pid_l→PWMB (Motor B = Left), pid_r→PWMA (Motor A = Right)
-- **Waveshare 2.42" OLED display** ⚠️ partially working (2026-05-14):
-  - SPI mode, wired to Pi SPI0: MOSI=GPIO10, SCLK=GPIO11, CE0=GPIO8, DC=GPIO25, RST=GPIO27
-  - Driver: spidev + RPi.GPIO directly — do NOT use luma.oled (its ssd1309 sends SSD1306 charge pump command which corrupts init)
-  - Node: `oled_display_node.py` — shows IP, battery, velocity, pose, nav status at 2Hz
-  - Works after `sudo systemctl restart oled-display` ✅
-  - **BOOT BUG**: display stays dark on first boot even though init logs "Display init OK" and no render errors. Root cause unknown — SPI writes are accepted by kernel without exception but display shows nothing. After a systemctl restart it works fine.
-  - **oled-display.service is currently DISABLED on Pi** (disabled to stop reboot loop — see below)
-  - **⚠️ Pi SD card may be corrupted** — see Pi SD card status below
+  - Robot stack launches with `mybot-launch` ✅
+  - PID: Kp=30, Ki=150, KI_MAX=1.0, Kd=0
+- **Waveshare 2.42" OLED display** ⚠️ hardware issue (2026-05-14):
+  - All wires verified correct. RST was on wrong pin (11→13 fixed this session).
+  - **ALL software paths exhausted** — display still completely dark
+  - oled-display.service DISABLED on Pi
 
-### ⚠️ Pi SD card status — READ FIRST
-The Pi SD card is likely corrupted from repeated unclean shutdowns during OLED boot debugging.
+### ⚠️ OLED display — hardware issue, resume here
+**All software confirmed working** (no exceptions, official Waveshare demo runs clean):
+- Hardware SPI mode 3 and mode 0 — dark
+- Software SPI (bit-bang) — dark  
+- Official Waveshare Python demo (gpiozero) — dark
+- Ran as sudo — dark
 
-**Before doing anything else, repair or reflash the SD card:**
+**Wiring — all verified correct:**
+| Wire | Pi Pin |
+|---|---|
+| Red (VCC) | 1 (3.3V) |
+| Black (GND) | 6 |
+| Blue (DIN/MOSI) | 19 |
+| Green (DC) | 22 |
+| Yellow (CLK) | 23 |
+| Orange (CS) | 24 |
+| White (RST) | 13 ← was on pin 11, fixed |
 
-Option A — Repair (5 min, try first):
-```bash
-# Remove SD card, plug into dev machine via USB reader
-lsblk   # find the device, e.g. /dev/sdb
-sudo fsck -y /dev/sdb2   # run twice until clean
-# Reinstall SD card in Pi
-```
+**Next hardware steps to try:**
+1. Move VCC (red) from pin 1 → pin 2 (5V) — rules out weak 3.3V supply
+2. Check flat flex cable on back of display PCB — ribbon connecting OLED glass to board
+3. If both fail, display is likely damaged
 
-Option B — Reflash (last resort): flash Ubuntu 22.04 ARM64, then follow CLAUDE.md setup steps.
+**Code state:**
+- Debug commits `fd3b2ee` and `cf49017` still in main (0xA5 diagnostic) — revert when display fixed
+- 4px left text margin (x=4) is correct — keep it
+- `oled-display.service` DISABLED on Pi
 
-**After Pi boots:**
-```bash
-# Confirm oled-display.service is disabled (it was disabled before corruption)
-sudo systemctl status oled-display
-# Pull latest code
-cd ~/mybot_ws/src/articubot_one && git pull
-```
+**Tools already on Pi:**
+- Official Waveshare demo: `~/waveshare_demo/OLED_Module_Code/RaspberryPi/python/`
+  Run: `cd ~/waveshare_demo/OLED_Module_Code/RaspberryPi/python && sudo python3 example/OLED_2in42_test.py`
+- python3-gpiozero installed ✅
 
-### OLED boot issue — next steps
-The display works after `systemctl restart` but not on first boot. Still unresolved.
-Key facts established:
-- `_init_display()` completes without exception ("Display init OK" in journal)
-- No render errors logged
-- `0xAF` (Display ON) + diagnostic fill inside `_init_display()` — display stays dark
-- `0xA5` (Entire Display ON command) inside `_init_display()` — display stays dark
-- Bare metal test (same spidev code, run manually from SSH) — works immediately
-- `systemctl restart oled-display` — works immediately
-- Conclusion: something about the first-boot execution context prevents SPI from reaching the display, even though no exception is thrown
-
-**Current code state (main branch):**
-- Commits `fd3b2ee` and `cf49017` are debug commits — remove them when resuming
-- `oled_display_node.py` currently has `0xA5` diagnostic command in `_init_display()` — revert this
-- 4px left text margin (fill=0 text at x=4) is correct and should be kept
-- `oled-display.service` is DISABLED on Pi — re-enable after boot issue is fixed
-
-**Things to try next session:**
-1. Run the node under `sudo` (via systemd with `User=root`) to rule out permissions
-2. Try software SPI (bit-bang via RPi.GPIO) instead of hardware spidev
-3. Check if adding `time.sleep(2)` at the very top of `_init_display()` (before even opening SPI) helps
-4. Add a ROS timer that retries `_init_display()` if `self._spi` succeeds but first render produces no visible output
-
-**Next steps (after Pi is healthy):**
-1. Fix OLED boot issue
-2. Object Tracking with OpenCV (final tutorial chapter)
-3. Jetson Nano setup (Docker + ROS 2 Humble + CUDA)
+**Next steps:**
+1. Fix OLED hardware issue
+2. Re-enable oled-display.service + test boot
+3. Revert debug commits
+4. Object Tracking with OpenCV (final tutorial chapter)
+5. Jetson Nano setup (Docker + ROS 2 Humble + CUDA)
 
 ---
 
