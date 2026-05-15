@@ -54,13 +54,6 @@ static constexpr float KP     =  30.0f;
 static constexpr float KI     = 150.0f;
 static constexpr float KI_MAX =   1.0f;  // integral clamp (PWM contribution = KI * KI_MAX)
 
-// ── Velocity ramp (slew-rate limiter) ────────────────────────────────
-// Matches the acceleration limits previously applied by diff_drive_controller
-// in my_controllers.yaml (removed when migrating from ros2_control to micro-ROS).
-static constexpr float LIN_ACCEL = 0.5f;   // m/s²
-static constexpr float ANG_ACCEL = 1.0f;   // rad/s²
-static float des_lin = 0.0f, des_ang = 0.0f;   // desired (from cmd_vel)
-static float ramp_lin = 0.0f, ramp_ang = 0.0f; // ramped (fed to PID)
 
 struct PID { float target = 0.0f, prev_err = 0.0f, integral = 0.0f; };
 static PID pid_l, pid_r;
@@ -137,8 +130,10 @@ static void log(const char* fmt, Args... args) {
 // ── cmd_vel callback ──────────────────────────────────────────────────
 static void cmd_cb(const void* msg) {
     const auto* m = (const geometry_msgs__msg__Twist*)msg;
-    des_lin = m->linear.x;
-    des_ang = m->angular.z;
+    float lin = m->linear.x;
+    float ang = m->angular.z;
+    pid_l.target = (lin - ang * WHEEL_SEP * 0.5f) / WHEEL_RADIUS;
+    pid_r.target = (lin + ang * WHEEL_SEP * 0.5f) / WHEEL_RADIUS;
 }
 
 // ── micro-ROS entity management ───────────────────────────────────────
@@ -266,8 +261,6 @@ void loop() {
                     prev_l = 0; prev_r = 0;
                     pid_l.prev_err = 0.0f; pid_r.prev_err = 0.0f;
                     pid_l.integral = 0.0f; pid_r.integral = 0.0f;
-                    des_lin = 0.0f; des_ang = 0.0f;
-                    ramp_lin = 0.0f; ramp_ang = 0.0f;
                     t_control = now; t_battery = now; t_ping = now;
                     state = CONNECTED;
                     log("[esp32_robot] connected\n");
@@ -296,13 +289,6 @@ void loop() {
 
                 float vel_l = (float)dl * COUNTS_TO_RAD / dt;  // rad/s
                 float vel_r = (float)dr * COUNTS_TO_RAD / dt;
-
-                float max_lin_step = LIN_ACCEL * dt;
-                float max_ang_step = ANG_ACCEL * dt;
-                ramp_lin += constrain(des_lin - ramp_lin, -max_lin_step, max_lin_step);
-                ramp_ang += constrain(des_ang - ramp_ang, -max_ang_step, max_ang_step);
-                pid_l.target = (ramp_lin - ramp_ang * WHEEL_SEP * 0.5f) / WHEEL_RADIUS;
-                pid_r.target = (ramp_lin + ramp_ang * WHEEL_SEP * 0.5f) / WHEEL_RADIUS;
 
                 motor_set(PWMB_CH, BIN1, BIN2, pid_compute(pid_l, vel_l, dt));  // Left PID → Motor B (Left)
                 motor_set(PWMA_CH, AIN1, AIN2, pid_compute(pid_r, vel_r, dt));  // Right PID → Motor A (Right)
@@ -364,8 +350,6 @@ void loop() {
             if (now - t_ping >= 2000) {
                 t_ping = now;
                 if (rmw_uros_ping_agent(500, 3) != RMW_RET_OK) {
-                    des_lin = 0.0f; des_ang = 0.0f;
-                    ramp_lin = 0.0f; ramp_ang = 0.0f;
                     pid_l.target = 0.0f; pid_r.target = 0.0f;
                     motors_stop();
                     destroy_entities();
