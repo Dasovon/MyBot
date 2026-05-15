@@ -3,7 +3,7 @@
 ## Session Orientation — Read First
 
 ### What this project is
-ROS 2 Humble differential drive robot. RPi 4 + Arduino Nano (production stack). ESP32-S3 migration in progress to replace Arduino + Pi-side sensors. Based on Articulated Robotics tutorial series.
+ROS 2 Humble differential drive robot. RPi 4 + ESP32-S3 (production stack — Arduino Nano replaced). Based on Articulated Robotics tutorial series.
 
 ### Current state (2026-05-15)
 - Nav2 autonomous navigation ✅ working (saved map at `~/mybot_ws/maps/my_map`)
@@ -47,7 +47,8 @@ SSH to Pi: `ssh ryan@mybot "..."` — prefer hostname over IP.
 ### What runs where
 | Component | Machine |
 |---|---|
-| ros2_control, motors, encoders, RPLidar, BNO055, RealSense | Pi |
+| micro_ros_agent, RPLidar, RealSense | Pi |
+| motors, encoders, BNO055, INA219, odometry, IMU | ESP32-S3 (via USB to Pi) |
 | EKF, Nav2 (AMCL/planner/controller), RViz2, OpenCV | Dev |
 
 **ESP32 dev:** use dev (Linux) or Windows — no Pi needed for bench work.
@@ -56,10 +57,13 @@ SSH to Pi: `ssh ryan@mybot "..."` — prefer hostname over IP.
 
 ## Launch Sequence
 
+**Pi robot stack auto-starts at boot** via `robot-launch.service` — no manual step needed.
+If you need to restart it manually: `ssh ryan@mybot "mybot-launch"` (kills stale processes first).
+
 ```bash
-# 1. Pi — hardware
-ssh ryan@mybot "source ~/mybot_ws/install/setup.bash && ros2 launch articubot_one launch_robot.launch.py"
-# alias: mybot-launch (clears /dev/arduino and /dev/rplidar first)
+# 1. Pi — auto-starts at boot (robot-launch.service)
+# Manual override if needed:
+ssh ryan@mybot "mybot-launch"
 
 # 2. Dev — EKF
 ros2 launch articubot_one dev_launch.py
@@ -112,11 +116,10 @@ rviz2
 ---
 
 ## Repos / Branches
-- `src/articubot_one` → `main`
-- `src/diffdrive_arduino` → `humble`
-- `src/serial` → `newans_ros2`
-- `src/ros_arduino_bridge` → `main` (legacy)
-- `feature/esp32-microros` — ESP32 + micro-ROS replacement (not merged)
+- `src/articubot_one` → `main` (active — includes ESP32 firmware and OLED node)
+- `src/diffdrive_arduino` → `humble` (on Pi, kept in ws but not active)
+- `src/serial` → `newans_ros2` (on Pi, kept in ws but not active)
+- `src/ros_arduino_bridge` → `main` (legacy Arduino firmware reference only)
 
 Remote: `github.com/Dasovon/MyBot`
 
