@@ -73,6 +73,8 @@ static constexpr float REVERSAL_COAST_VEL = 0.8f;  // rad/s: coast before revers
 static constexpr int   PWM_SLEW_PER_TICK = 8;   // max PWM change per 30Hz control tick
 static float cmd_lin = 0.0f, cmd_ang = 0.0f;
 static float ramp_lin = 0.0f, ramp_ang = 0.0f;
+static constexpr uint32_t CMD_TIMEOUT_MS = 500;
+static uint32_t t_cmd_last = 0;
 static int last_pwm_l = 0, last_pwm_r = 0;
 
 struct PID { float target = 0.0f, prev_err = 0.0f, integral = 0.0f; };
@@ -175,6 +177,7 @@ static void cmd_cb(const void* msg) {
     const auto* m = (const geometry_msgs__msg__Twist*)msg;
     cmd_lin = m->linear.x;
     cmd_ang = m->angular.z;
+    t_cmd_last = millis();
 }
 
 // ── micro-ROS entity management ───────────────────────────────────────
@@ -307,6 +310,7 @@ void loop() {
                     vel_l_filt = 0.0f; vel_r_filt = 0.0f;
                     cmd_lin = 0.0f; cmd_ang = 0.0f;
                     ramp_lin = 0.0f; ramp_ang = 0.0f;
+                    t_cmd_last = 0;
                     t_control = now; t_battery = now; t_ping = now;
                     state = CONNECTED;
                     log("[esp32_robot] connected\n");
@@ -338,6 +342,12 @@ void loop() {
 
                 vel_l_filt = VEL_ALPHA * vel_l + (1.0f - VEL_ALPHA) * vel_l_filt;
                 vel_r_filt = VEL_ALPHA * vel_r + (1.0f - VEL_ALPHA) * vel_r_filt;
+
+                // Command timeout: zero cmd if no message received within CMD_TIMEOUT_MS
+                if (t_cmd_last > 0 && (now - t_cmd_last) > CMD_TIMEOUT_MS) {
+                    cmd_lin = 0.0f;
+                    cmd_ang = 0.0f;
+                }
 
                 // Ramp cmd toward user command. Stop commands snap target to zero and coast.
                 if (fabsf(cmd_lin) < 0.01f && fabsf(cmd_ang) < 0.01f) {
