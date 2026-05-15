@@ -96,6 +96,7 @@ static Adafruit_INA219  ina(0x40);
 // ── micro-ROS ─────────────────────────────────────────────────────────
 enum State { WAITING, CONNECTED };
 static State state = WAITING;
+static unsigned long waiting_start = 0;
 
 static rcl_publisher_t    pub_odom, pub_imu, pub_bat;
 static rcl_subscription_t sub_cmd;
@@ -249,7 +250,9 @@ void loop() {
 
     switch (state) {
         case WAITING:
+            if (waiting_start == 0) waiting_start = millis();
             if (rmw_uros_ping_agent(500, 3) == RMW_RET_OK) {
+                waiting_start = 0;
                 if (create_entities()) {
                     rmw_uros_sync_session(1000);
                     odom_x = 0.0f; odom_y = 0.0f; odom_th = 0.0f;
@@ -261,6 +264,9 @@ void loop() {
                     state = CONNECTED;
                     log("[esp32_robot] connected\n");
                 }
+            } else if (millis() - waiting_start > 30000) {
+                log("[esp32_robot] no agent for 30s — restarting\n");
+                esp_restart();
             }
             break;
 
@@ -347,6 +353,7 @@ void loop() {
                     motors_stop();
                     destroy_entities();
                     state = WAITING;
+                    waiting_start = 0;
                     log("[esp32_robot] agent lost — reconnecting...\n");
                 }
             }
