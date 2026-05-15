@@ -11,19 +11,19 @@ Claude Code runs on dev. It reaches the Pi via `ssh ryan@mybot "..."`.
 
 | Component | Machine | Launch |
 |---|---|---|
-| micro_ros_agent (ESP32 bridge) | Pi | `mybot-launch` |
-| RPLidar, RealSense | Pi | `mybot-launch` |
+| micro_ros_agent (ESP32 bridge) | Pi | `robot-launch.service` / `mybot-launch` |
+| RPLidar, RealSense | Pi | `robot-launch.service` / `mybot-launch` |
 | EKF (robot_localization) | Dev | `dev_launch.py` |
 | Nav2 (AMCL, planner, controller) | Dev | `navigation_launch.py` |
-| Ball tracker / OpenCV | Dev | `ball_tracker.launch.py` |
 | RViz2 | Dev | `rviz2` |
 
 > BNO055 IMU and INA219 are handled entirely by the ESP32-S3 over micro-ROS — no Pi-side sensor nodes needed.
+> Current Pi launch path is direct `twist_mux -> /diff_cont/cmd_vel_unstamped`; the Pi does not run `nav2_velocity_smoother`.
 
 ### Full launch sequence
 
 ```bash
-# 1. Pi — hardware (via SSH from dev, or use mybot-launch alias on Pi directly)
+# 1. Pi — hardware (via SSH from dev, or let robot-launch.service start automatically)
 ssh ryan@mybot "source ~/mybot_ws/install/setup.bash && mybot-launch"
 
 # 2. Dev — EKF
@@ -35,10 +35,7 @@ ros2 launch articubot_one localization_launch.py
 # 4. Dev — Nav2
 ros2 launch articubot_one navigation_launch.py
 
-# 5. Dev — ball tracker (optional)
-ros2 launch articubot_one ball_tracker.launch.py
-
-# 6. Dev — RViz2
+# 5. Dev — RViz2
 rviz2
 ```
 
@@ -55,8 +52,6 @@ ssh ryan@192.168.86.33 "ps aux | grep micro_ros | grep -v grep | awk '{print \$2
 
 > **Warning:** Always use `-r 10` continuous publishers for velocity commands. `--once` latches the command in twist_mux — the robot keeps moving until a new message overrides it. Check publisher count with `ros2 topic info /cmd_vel`.
 
-> **Warning:** Always kill ball_tracker before closing its tuning window — `follow_ball` keeps sending velocity commands after the window closes.
-
 ---
 
 ## End-of-Session Routine
@@ -67,7 +62,7 @@ Run this at the end of every session. Claude Code can execute it on your behalf.
 
 ```bash
 # Dev — kill local nodes
-pkill -f "ros2 launch\|detect_ball\|follow_ball\|ekf_filter\|nav2\|amcl\|map_server" 2>/dev/null
+pkill -f "ros2 launch\|ekf_filter\|nav2\|amcl\|map_server" 2>/dev/null
 
 # Pi — kill hardware nodes
 ssh ryan@mybot "sudo pkill -f 'ros2 launch\|micro_ros_agent\|rplidar\|realsense2_camera' 2>/dev/null"
@@ -121,8 +116,6 @@ Memory files live at:
 │   ├── config/             ← nav2, ekf, controller, slam params
 │   ├── description/        ← URDF/xacro
 │   └── docs/               ← this file and hardware docs
-└── ball_tracker/           ← joshnewans ball tracker (dev-side only)
-
 ~/mybot_ws/src/             ← Pi workspace (mirrors above via git pull)
 ├── articubot_one/
 ├── diffdrive_arduino/      ← branch: humble

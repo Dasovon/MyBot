@@ -1,6 +1,6 @@
 # Pin Mapping
 
-## Current Stack — Arduino Nano → Adafruit TB6612
+## Legacy Stack — Arduino Nano → Adafruit TB6612
 
 Motor A (PWMA/AIN1/AIN2) drives the **RIGHT** motor.
 Motor B (PWMB/BIN1/BIN2) drives the **LEFT** motor.
@@ -72,7 +72,7 @@ Left/right within 0.002 m/s. Operating range (50–100%) tracks 88–98% for bot
 
 ---
 
-## Current Stack — BNO055 → Raspberry Pi
+## Legacy Stack — BNO055 → Raspberry Pi
 
 | BNO055 Pin | Pi Pin | Note |
 |------------|--------|------|
@@ -88,7 +88,7 @@ Config: `src/articubot_one/config/bno055_params.yaml`
 
 ---
 
-## ESP32-S3 Stack — Lonely Binary Expansion Base (branch: feature/esp32-microros)
+## ESP32-S3 Stack — Lonely Binary Expansion Base (current production stack)
 
 Hardware: ESP32-S3-DevKitC-1 mounted on Lonely Binary ESP32-S3 Expansion Base.
 All GPIO 3.3V logic. TB6612 VCC → 3V3 (no level shifter needed).
@@ -99,7 +99,7 @@ Board pin rows:
 - Left side:  3V3, GND, 15, 16, 17, 18, 8, 3, 46, 9, 10, 11, 12, 13, 14
 - Right side: 3V3, GND, 1, 2, 42, 41, 40, 39, 38, 37, 36, 35, 0, 45, 48, 47, 21, 20, 19
 
-### ESP32-S3 → TB6612 (confirmed working)
+### ESP32-S3 → TB6612 (current production path)
 
 Motor A (PWMA/AIN1/AIN2) = **RIGHT** | Motor B (PWMB/BIN1/BIN2) = **LEFT**
 

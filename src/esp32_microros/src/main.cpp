@@ -62,11 +62,18 @@ static constexpr float VEL_ALPHA = 0.2f;
 static float vel_l_filt = 0.0f, vel_r_filt = 0.0f;
 
 // Command ramp: smooths abrupt step inputs so the first PID tick doesn't punch.
-// Preseed integral handles the deadband on the very first ramp step.
-static constexpr float LIN_ACCEL = 0.50f;  // m/s² ramp rate — tune up if sluggish
-static constexpr float ANG_ACCEL = 1.50f;  // rad/s² ramp rate — tune up if sluggish
+// Stop commands snap target to zero and coast; ramped stops can make PID brake past zero.
+// No active braking: if a wheel is still rolling faster than a new target, coast instead
+// of commanding the opposite direction. This avoids a reverse kick after "k" then turn.
+// Preseed integral handles motor deadband on the first ramp step.
+static constexpr float LIN_ACCEL      = 0.35f;  // m/s² start/command ramp
+static constexpr float ANG_ACCEL      = 1.10f;  // rad/s² start/command ramp
+static constexpr float START_PWM_SEED = 55.0f;  // gentle deadband preseed
+static constexpr float REVERSAL_COAST_VEL = 0.8f;  // rad/s: coast before reversing a rolling wheel
+static constexpr int   PWM_SLEW_PER_TICK = 8;   // max PWM change per 30Hz control tick
 static float cmd_lin = 0.0f, cmd_ang = 0.0f;
 static float ramp_lin = 0.0f, ramp_ang = 0.0f;
+static int last_pwm_l = 0, last_pwm_r = 0;
 
 struct PID { float target = 0.0f, prev_err = 0.0f, integral = 0.0f; };
 static PID pid_l, pid_r;
@@ -77,11 +84,34 @@ static int pid_compute(PID& p, float actual, float dt) {
         p.prev_err = 0.0f;
         return 0;  // coast to stop — avoid hard braking jerk on key release
     }
+    if ((p.target > 0.0f && actual < -REVERSAL_COAST_VEL) ||
+        (p.target < 0.0f && actual >  REVERSAL_COAST_VEL)) {
+        p.prev_err = p.target - actual;
+        return 0;  // let momentum bleed off before applying reverse drive
+    }
     float err = p.target - actual;
     p.integral = constrain(p.integral + err * dt, -KI_MAX, KI_MAX);
     float out = KP * err + KI * p.integral;
     p.prev_err = err;
-    return (int)constrain(out, -255.0f, 255.0f);
+    out = constrain(out, -255.0f, 255.0f);
+    if ((p.target > 0.0f && out < 0.0f) || (p.target < 0.0f && out > 0.0f)) {
+        return 0;  // no active braking against the requested wheel direction
+    }
+    return (int)out;
+}
+
+static int slew_pwm(int requested, int& last) {
+    if (requested == 0) {
+        last = 0;
+        return 0;
+    }
+    if ((requested > 0 && last < 0) || (requested < 0 && last > 0)) {
+        last = 0;
+    }
+    int delta = requested - last;
+    delta = constrain(delta, -PWM_SLEW_PER_TICK, PWM_SLEW_PER_TICK);
+    last += delta;
+    return last;
 }
 
 // ── Encoders ──────────────────────────────────────────────────────────
@@ -273,6 +303,7 @@ void loop() {
                     pid_l.prev_err = 0.0f; pid_r.prev_err = 0.0f;
                     pid_l.integral = 0.0f; pid_r.integral = 0.0f;
                     pid_l.target = 0.0f; pid_r.target = 0.0f;
+                    last_pwm_l = 0; last_pwm_r = 0;
                     vel_l_filt = 0.0f; vel_r_filt = 0.0f;
                     cmd_lin = 0.0f; cmd_ang = 0.0f;
                     ramp_lin = 0.0f; ramp_ang = 0.0f;
@@ -308,7 +339,7 @@ void loop() {
                 vel_l_filt = VEL_ALPHA * vel_l + (1.0f - VEL_ALPHA) * vel_l_filt;
                 vel_r_filt = VEL_ALPHA * vel_r + (1.0f - VEL_ALPHA) * vel_r_filt;
 
-                // Ramp cmd toward user command; snap to zero immediately on stop command
+                // Ramp cmd toward user command. Stop commands snap target to zero and coast.
                 if (fabsf(cmd_lin) < 0.01f && fabsf(cmd_ang) < 0.01f) {
                     ramp_lin = 0.0f;
                     ramp_ang = 0.0f;
@@ -323,7 +354,7 @@ void loop() {
                 auto preseed = [](PID& p, float nt) {
                     if (fabsf(p.target) < 0.01f && fabsf(nt) > 0.01f) {
                         float s = (nt > 0) ? 1.0f : -1.0f;
-                        p.integral = constrain(s * (70.0f - KP * fabsf(nt)) / KI, -KI_MAX, KI_MAX);
+                        p.integral = constrain(s * (START_PWM_SEED - KP * fabsf(nt)) / KI, -KI_MAX, KI_MAX);
                     }
                 };
                 preseed(pid_l, tl);
@@ -331,8 +362,10 @@ void loop() {
                 pid_l.target = tl;
                 pid_r.target = tr;
 
-                motor_set(PWMB_CH, BIN1, BIN2, pid_compute(pid_l, vel_l_filt, dt));
-                motor_set(PWMA_CH, AIN1, AIN2, pid_compute(pid_r, vel_r_filt, dt));
+                int pwm_l = slew_pwm(pid_compute(pid_l, vel_l_filt, dt), last_pwm_l);
+                int pwm_r = slew_pwm(pid_compute(pid_r, vel_r_filt, dt), last_pwm_r);
+                motor_set(PWMB_CH, BIN1, BIN2, pwm_l);
+                motor_set(PWMA_CH, AIN1, AIN2, pwm_r);
                 log("[enc] tgt=%.2f/%.2f act=%.2f/%.2f filt=%.2f/%.2f\n",
                     pid_l.target, pid_r.target, vel_l, vel_r, vel_l_filt, vel_r_filt);
 
@@ -392,6 +425,7 @@ void loop() {
                 t_ping = now;
                 if (rmw_uros_ping_agent(500, 3) != RMW_RET_OK) {
                     pid_l.target = 0.0f; pid_r.target = 0.0f;
+                    last_pwm_l = 0; last_pwm_r = 0;
                     motors_stop();
                     destroy_entities();
                     state = WAITING;

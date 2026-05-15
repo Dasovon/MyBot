@@ -1,7 +1,7 @@
 # HARDWARE_MEMORY.md
 
 ## Robot Hardware Goal
-Differential drive ROS 2 robot using Raspberry Pi + Arduino motor controller + serial ros2_control hardware interface.
+Differential drive ROS 2 robot using Raspberry Pi + ESP32-S3 micro-ROS controller. The Arduino motor-controller path is legacy reference only.
 
 ---
 
@@ -25,6 +25,9 @@ ESP32-S3-DevKitC-1 — 192.168.86.43 (WiFi OTA only)
 ├── GPIO10-15 → TB6612 → Left/Right DC Gear Motors (JGA25-371, 45:1)
 ├── GPIO40/41 (Left enc A/B), GPIO42/39 (Right enc A/B)
 └── I2C GPIO8/9 → BNO055 (0x28) + INA219 (0x40)
+
+Legacy reference:
+- `ros_arduino_bridge` + `diffdrive_arduino` remain in the repo for historical comparison only.
 
 ---
 
@@ -217,11 +220,11 @@ Ground must be common between: Pi, ESP32-S3, TB6612, encoders, DFR0205.
 1. Plug ESP32-S3 USB (ttyACM0) and RPLidar USB into Pi
 2. Verify devices: ls /dev/ttyACM0 /dev/rplidar
 3. Source workspace: source ~/mybot_ws/install/setup.bash && source ~/microros_ws/install/setup.bash
-4. Launch robot: mybot-launch
+4. Confirm robot-launch.service is active, or run `mybot-launch` for a manual restart
 5. On dev machine: source ~/dev_ws/install/setup.bash
 
 mybot-launch alias (in ~/.bashrc on Pi):
-Runs launch_robot.launch.py which starts micro_ros_agent, twist_mux, rplidar, realsense2_camera, robot_state_publisher
+Runs launch_robot.launch.py which starts micro_ros_agent, twist_mux, rplidar, realsense2_camera, robot_state_publisher. The current launch path sends `twist_mux` directly to `/diff_cont/cmd_vel_unstamped`.
 
 ---
 
@@ -259,7 +262,7 @@ Hardware/
 
 ---
 
-## ESP32-S3 + micro-ROS (branch: feature/esp32-microros — all tests confirmed)
+## ESP32-S3 + micro-ROS (production — all tests confirmed)
 
 Hardware: ESP32-S3-DevKitC-1 on Lonely Binary ESP32-S3 Expansion Base.
 Static IP: 192.168.86.43 | Hostname: esp32-mybot.local | OTA password: esp32ota

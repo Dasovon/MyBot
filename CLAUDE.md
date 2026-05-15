@@ -12,10 +12,11 @@ ROS 2 Humble differential drive robot. RPi 4 + ESP32-S3 (production stack — Ar
 - **ESP32-S3 full firmware validated and driving smoothly** (fix #31):
   - Publishes: `/diff_cont/odom` (30Hz), `/imu/imu` (30Hz), `/battery_state` (1Hz)
   - Subscribes: `/diff_cont/cmd_vel_unstamped`
-  - Robot stack launches with `mybot-launch` ✅
+  - Robot stack auto-starts with `robot-launch.service`; `mybot-launch` remains the manual restart path
   - PID: Kp=30, Ki=150, KI_MAX=1.0, Kd=0
   - EMA filter: VEL_ALPHA=0.2 (suppresses left encoder EMI noise)
-  - Command ramp: LIN_ACCEL=0.50 m/s², ANG_ACCEL=1.50 rad/s² (smooth start, instant stop)
+  - Command shaping: LIN_ACCEL=0.35 m/s², ANG_ACCEL=1.10 rad/s², START_PWM_SEED=55, PWM_SLEW_PER_TICK=8, no active braking
+  - Launch path on Pi is direct `twist_mux -> /diff_cont/cmd_vel_unstamped`; no `nav2_velocity_smoother` package on the Pi
 - **Waveshare 2.42" OLED display** ✅ FULLY WORKING (2026-05-15):
   - `oled-display.service` ENABLED, running as `ryan`, survives cold power cycle
   - Shows: IP, battery V/A, velocity, position, nav status — all data from ESP32
@@ -180,7 +181,7 @@ Motor A (PWMA/AIN1/AIN2) = **RIGHT** | Motor B (PWMB/BIN1/BIN2) = **LEFT**
   ```
 - Serial commands: `e` (encoders) | `r` (reset) | `o <PWM1> <PWM2>` (raw) | `m <S1> <S2>` (closed-loop)
 
-### ESP32-S3 pin mapping — Lonely Binary Expansion Base (`feature/esp32-microros`)
+### ESP32-S3 pin mapping — Lonely Binary Expansion Base (production stack)
 ⚠️ GPIO4/5/6/7 and GPIO25/26/27/32/33/34/35/36/43/44 are NOT broken out on the Lonely Binary board.
 
 Board left side: 3V3, GND, 15, 16, 17, 18, 8, 3, 46, 9, 10, 11, 12, 13, 14
@@ -232,7 +233,7 @@ Gitignored. Create manually on every dev machine at `src/esp32_microros/**/crede
    ```
    git clone https://github.com/Dasovon/MyBot.git
    cd MyBot
-   git checkout feature/esp32-microros
+   # ESP32 firmware lives on main in this repo; no branch switch needed
    ```
 6. **Open sketch folder** in VS Code:
    `File → Open Folder → MyBot\src\esp32_microros\test\test_bno055`
@@ -494,7 +495,7 @@ Root cause: original table had Motor A and Motor B labels swapped vs firmware. F
 Files corrected: `CLAUDE.md`, `HARDWARE_MEMORY.md`, `docs/pin-mapping.md`.
 
 ### 21) ESP32 + micro-ROS experiment scaffolded (2026-04-26)
-Branch: `feature/esp32-microros`
+Branch: `main`
 
 Files created:
 - `src/esp32_microros/platformio.ini` — ESP32-DevKitC, Arduino 3.x, micro-ROS humble, Adafruit BNO055

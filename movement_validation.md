@@ -2,7 +2,7 @@
 
 Goal: Drive forward 1 meter, check `/odom` x position, fine-tune `enc_counts_per_rev` if needed.
 
-Current value: `enc_counts_per_rev = 1100` (measured via serial readback, not yet validated)
+Current value: `enc_counts_per_rev = 1010` (validated on the ESP32 micro-ROS stack)
 
 ---
 
@@ -123,7 +123,7 @@ fuser -k /dev/ttyUSB0 2>/dev/null
 ## Watch-outs
 
 - **Robot curves/drifts**: `enc_counts_per_rev` applies equally to both wheels. Drift means one wheel is physically slower or has different tire contact. Check PID or tighten/loosen wheel contact.
-- **Teleop feels slow**: Max velocity is capped at 0.5 m/s in `my_controllers.yaml` — intentional for this tuning phase.
+- **Teleop feels slow**: Max velocity is capped at 0.4 m/s in `nav2_params.yaml` and the ESP32 firmware still ramps starts/stops — intentional for this tuning phase.
 - **Serial not found**: Check `ls /dev/ttyUSB*` and confirm Arduino is connected. ROS launch will fail if `/dev/ttyUSB0` is missing.
 - **Controllers don't spawn**: Wait the full 3-second delay built into `launch_robot.launch.py`. If they still don't appear, check the launch terminal for hardware plugin errors.
 

@@ -37,7 +37,7 @@ Based on the [Articulated Robotics](https://articulatedrobotics.xyz/category/bui
 | BNO055 IMU + EKF fusion | ✅ working |
 | Nav2 autonomous navigation | ✅ working |
 | Intel RealSense D435 (color + depth) | ✅ working — RSUSB backend |
-| ESP32-S3 + micro-ROS (motors, IMU, battery) | ✅ working — replaces Arduino Nano + Pi I2C nodes |
+| ESP32-S3 + micro-ROS (motors, IMU, battery) | ✅ working — production controller |
 | Waveshare 2.42" OLED status display | ✅ working — starts at boot via systemd |
 | Object tracking (OpenCV) | ⬜ pending |
 
@@ -65,8 +65,7 @@ Based on the [Articulated Robotics](https://articulatedrobotics.xyz/category/bui
 ```
 12V battery
 ├── DFR0205 5V regulated ──→ Raspberry Pi (USB-C)
-│       └── Pi USB ────────→ Arduino Nano  (power + serial)
-│       └── Pi USB ────────→ ESP32-S3      (power + serial, when in use)
+│       └── Pi USB ────────→ ESP32-S3      (power + serial, micro-ROS)
 └── DFR0205 12V passthrough → TB6612 VM   (motor power only)
 ```
 
@@ -87,17 +86,18 @@ Dev machine (Ubuntu 22.04)
 
 Raspberry Pi 4
   ├── robot_state_publisher
-  ├── ros2_control_node + diff_cont + joint_broad
   ├── twist_mux
   ├── rplidar_composition    /scan
-  ├── bno055                 /imu/imu
   ├── realsense2_camera      /camera/camera/{color,depth}/...
-  └── ina219_node            /battery_state
+  └── micro_ros_agent        micro-ROS bridge for ESP32-S3
 
         ↕ USB serial @ 57600
 
-Arduino Nano (ros_arduino_bridge)
-  └── closed-loop PID, TB6612 motor driver, quadrature encoders
+ESP32-S3 (production controller)
+  ├── closed-loop PID, TB6612 motor driver, quadrature encoders
+  ├── BNO055 → /imu/imu
+  ├── INA219 → /battery_state
+  └── subscribes /diff_cont/cmd_vel_unstamped
 ```
 
 ### ESP32-S3 + micro-ROS (production)
@@ -130,9 +130,9 @@ WiFi → OTA flashing + TelnetStream monitor (port 23)
 - ROS 2 Humble (Ubuntu 22.04)
 - `ros2_control`, `diff_drive_controller`, `joint_state_broadcaster`
 - `ros-humble-rplidar-ros`
-- `ros-humble-bno055`
 - `ros-humble-robot-localization`
 - `ros-humble-navigation2`, `ros-humble-nav2-bringup`
+- `ros-humble-twist-mux`
 - `ros-humble-realsense2-camera`, `ros-humble-realsense2-description`
 - librealsense v2.56.4 built from source with `-DFORCE_RSUSB_BACKEND=ON` (see [setup guide](docs/realsense-rsusb-setup.md))
 
@@ -154,11 +154,7 @@ git clone https://github.com/Dasovon/MyBot.git
 cd MyBot
 ```
 
-For ESP32 development, check out the feature branch:
-
-```bash
-git checkout feature/esp32-microros
-```
+This repo currently carries the ESP32 firmware on `main`; no extra branch checkout is required.
 
 ### 2. Pi workspace setup
 
@@ -292,7 +288,7 @@ MyBot/
 │   │   ├── config/             # Nav2, EKF, controller, SLAM params
 │   │   ├── description/        # URDF / xacro robot model
 │   │   └── docs/               # Hardware and workflow docs
-│   ├── esp32_microros/         # ESP32 + micro-ROS firmware (feature branch)
+│   ├── esp32_microros/         # ESP32 + micro-ROS firmware (production)
 │   │   ├── src/main.cpp        # Full combined firmware
 │   │   └── test/               # Incremental test sketches
 │   │       ├── test_bno055/    # I2C IMU verification ✅
@@ -301,7 +297,7 @@ MyBot/
 │   │       └── test_microros/  # micro-ROS transport test
 │   ├── diffdrive_arduino/      # ros2_control plugin  [branch: humble]
 │   ├── serial/                 # Serial library  [branch: newans_ros2]
-│   └── ros_arduino_bridge/     # Arduino firmware (current production path)
+│   └── ros_arduino_bridge/     # Arduino firmware (legacy reference only)
 ├── Hardware/                   # CAD renders and motor datasheets
 └── docs/
     ├── workflow.md             # Full launch sequence + emergency stop
@@ -315,7 +311,7 @@ MyBot/
 
 See [`docs/pin-mapping.md`](docs/pin-mapping.md) for full tables. Key assignments:
 
-**TB6612 → Arduino Nano (current stack)**
+**TB6612 → Arduino Nano (legacy stack)**
 
 | TB6612 | Arduino | |
 |---|---|---|

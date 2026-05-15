@@ -15,12 +15,12 @@ Recommendation:
 
 This is the most important safety improvement because it belongs at the lowest control layer.
 
-### 2. Add a shutdown stop path to `follow_ball`
+### 2. Add a shutdown stop path to every velocity publisher
 
-`follow_ball` publishes movement commands continuously. The workflow notes already warn that closing the tuning window can leave `follow_ball` running. The node should publish a zero `Twist` before shutdown so normal interrupts and launch shutdowns leave the robot stopped.
+Any node that publishes motion commands should send a zero `Twist` before shutdown so normal interrupts and launch shutdowns leave the robot stopped.
 
 Recommendation:
-- Add a small `stop_robot()` helper in `src/ball_tracker/ball_tracker/follow_ball.py`.
+- Add a small `stop_robot()` helper to each motion publisher that can outlive a window or callback.
 - Call it before `destroy_node()`.
 - Consider publishing the zero command several times over 200-300 ms to give DDS and `twist_mux` time to forward it.
 
@@ -81,11 +81,11 @@ This would make recovery from USB enumeration changes less brittle.
 
 ### 8. Tune velocity limits consistently across controller layers
 
-Velocity and acceleration limits appear in multiple places: `my_controllers.yaml`, `nav2_params.yaml`, velocity smoother config, and ESP32 PID behavior. Mismatched limits make tuning harder and can hide where a motion constraint is actually applied.
+Velocity and acceleration limits appear in multiple places: `my_controllers.yaml`, `nav2_params.yaml`, and ESP32 PID behavior. If a velocity smoother is reintroduced later, it should share the same limits. Mismatched limits make tuning harder and can hide where a motion constraint is actually applied.
 
 Recommendation:
 - Document the intended physical limits in one place.
-- Align `diff_drive_controller`, Nav2 DWB, velocity smoother, and firmware assumptions.
+- Align `diff_drive_controller`, Nav2 DWB, and firmware assumptions.
 - Keep firmware-level limits as the final safety boundary.
 
 ## Lower Priority
@@ -105,7 +105,6 @@ The robot stack depends heavily on launch/config correctness. A small set of che
 
 Recommendation:
 - Add a script or documented command set that validates xacro expansion, package discovery, launch argument parsing, and Python importability.
-- For `ball_tracker`, add unit tests around HSV/window conversion and command output behavior.
 - For firmware, keep PlatformIO test sketches but document the expected pass/fail criteria near each test.
 
 ### 11. Clean launch files incrementally
@@ -116,13 +115,13 @@ Recommendation:
 - Remove stale comments only when touching the relevant launch file for real work.
 - Keep comments that explain machine split, safety behavior, or non-obvious ROS remappings.
 
-### 12. Decide whether `ball_tracker` should stay as a separate upstream repo
+### 12. Decide whether the vision tracker should stay separate
 
-`ball_tracker` is currently a separate git repo and appears close to upstream tutorial code. The main robot package wraps it with robot-specific params and remappings.
+The tutorial-derived OpenCV tracker is still a separate repo and remains close to upstream example code. If you expect to modify that tracker heavily, vendor or fork it intentionally and document ownership.
 
 Recommendation:
-- If you expect to modify tracking behavior heavily, vendor or fork it intentionally and document ownership.
-- If it should stay upstream-clean, keep robot-specific behavior in `articubot_one` launch/config and avoid editing `ball_tracker` directly.
+- If it should stay upstream-clean, keep robot-specific behavior in `articubot_one` launch/config and avoid editing the tracker repo directly.
+- If it becomes part of the active robot workflow, move it into the main workspace intentionally rather than leaving it as a sidecar repo.
 
 ## File Structure Improvements
 
@@ -200,7 +199,7 @@ This would make the repository easier to scan for newcomers and future maintenan
 
 ### 19. Add a workspace hygiene note for local tool directories
 
-The workspace root contains local tool directories such as `.agents`, `.codex`, `.claude`, and `.vscode`. The `ball_tracker` repo also has local `.agents` and `.codex` directories. They are not part of the robot stack, but they can distract from source layout and may become accidental commit candidates in future repos.
+The workspace root contains local tool directories such as `.agents`, `.codex`, `.claude`, and `.vscode`. They are not part of the robot stack, but they can distract from source layout and may become accidental commit candidates in future repos.
 
 Recommendation:
 - Keep local assistant/editor directories ignored in every repo that may contain them.
@@ -208,8 +207,6 @@ Recommendation:
 - Avoid placing project instructions only inside local tool directories; keep durable project docs in tracked Markdown files.
 
 ### 20. Remove generated Python bytecode from working trees when convenient
-
-`ball_tracker/ball_tracker/__pycache__` exists locally and is ignored. It is small, but generated files inside source directories add noise to tree inspection.
 
 Recommendation:
 - Leave it ignored.

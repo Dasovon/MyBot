@@ -2,12 +2,12 @@
 
 **ESP32-S3 + micro-ROS firmware for MyBot** — replaces the Arduino Nano motor controller and Pi-side BNO055/INA219 I2C nodes with a single ESP32-S3, publishing identical ROS 2 topics over micro-ROS serial transport.
 
-[![Branch](https://img.shields.io/badge/branch-feature%2Fesp32--microros-blue)](https://github.com/Dasovon/MyBot/tree/feature/esp32-microros)
+[![Branch](https://img.shields.io/badge/branch-main-blue)](https://github.com/Dasovon/MyBot/tree/main)
 [![Framework](https://img.shields.io/badge/firmware-PlatformIO-purple?logo=platformio)](https://platformio.org/)
 [![micro-ROS](https://img.shields.io/badge/micro--ROS-Humble-orange)](https://micro.ros.org/)
 [![Board](https://img.shields.io/badge/board-ESP32--S3--DevKitC--1-red)](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/hw-reference/esp32s3/user-guide-devkitc-1.html)
 
-> This is a feature branch of [MyBot](../../README.md). The Pi-side EKF, Nav2, and AMCL stack require **zero changes** — the ESP32 publishes the same topics the Arduino stack did.
+> This firmware lives in the main [MyBot](../../README.md) repository. The Pi-side EKF, Nav2, and AMCL stack require **zero changes** — the ESP32 publishes the same topics the Arduino stack did.
 
 ---
 
@@ -217,7 +217,7 @@ ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyACM0
 
 Then launch the rest of the stack normally (EKF, Nav2, RViz2) — no changes needed.
 
-**To switch back to Arduino stack:** unplug ESP32, plug in Arduino, use `mybot-launch`.
+**Legacy Arduino stack:** kept in the repo for reference only; the active robot uses this ESP32 firmware.
 
 ---
 
