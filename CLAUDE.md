@@ -19,7 +19,7 @@ ROS 2 Humble differential drive robot. RPi 4 + Arduino Nano (production stack). 
   - Shows: IP, battery V/A, velocity, position, nav status — all data from ESP32
   - Root cause of "dark display": RPi.GPIO requires gpio/spi groups (fix #25 below)
   - Root cause of "BAT -- / AGENT OFFLINE": DDS late-joining timing (fix #27 below)
-  - Service uses `FASTRTPS_DEFAULT_PROFILES_FILE=~/fastdds_no_shm.xml` (UDP-only transport)
+  - Service uses default FastDDS (SHM+UDP); self-restart loop in node handles timing
 
 ### Next steps
 1. Object Tracking with OpenCV (final tutorial chapter)
@@ -610,19 +610,20 @@ made endpoint re-negotiation fail silently for late-joining publishers from micr
 3. Restarting oled service WHILE ESP32 was connected → callbacks fired immediately (11.50V at 116ms)
 4. Confirmed: the node matching works, but only when it starts after the publishers are live.
 
-**Two-part fix:**
+**Fix:** Self-restart on data timeout in `oled_display_node.py`. If `_battery_voltage` is still None
+after 30 seconds, calls `os._exit(1)`. Systemd (`Restart=always`, `RestartSec=5`) restarts the node.
+Repeats every ~35 s until `mybot-launch` is running and the ESP32 is connected. At that point the
+node starts with live publishers already in the DDS domain — callbacks fire within ~1 second.
 
-1. **FastDDS UDP-only transport** (`~/fastdds_no_shm.xml`): disables shared-memory transport.
-   Set in service via `FASTRTPS_DEFAULT_PROFILES_FILE=/home/ryan/fastdds_no_shm.xml`.
-   Required for the node to appear in `ros2 node list` and for DDS endpoint matching to work.
+**What did NOT work:** forcing FastDDS UDP-only transport (`FASTRTPS_DEFAULT_PROFILES_FILE` with
+`useBuiltinTransports=false`). UDP-only profile breaks matching with micro_ros_agent because
+micro_ros_agent's DDS participants use SHM as primary transport; with no common transport the
+endpoints can't exchange data. Default SHM+UDP is required.
 
-2. **Self-restart on data timeout** in `oled_display_node.py`: if `_battery_voltage` is still None
-   after 30 seconds, calls `os._exit(1)`. Systemd (`Restart=always`, `RestartSec=5`) restarts the
-   node. Repeats every ~35 s until `mybot-launch` is running and the ESP32 is connected. At that
-   point the node starts and finds live publishers immediately — callbacks fire within milliseconds.
+**Confirmed working:** odom callback at 1.1s after node start, battery at 1.6s (11.43V from real ESP32).
+Display shows: `BAT 11.43V  0.30A`, `VEL 0.00m/s  0.0r/s`, `TELEOP`.
 
 **Files changed:**
-- `src/articubot_one/scripts/oled_display_node.py` — added `DATA_TIMEOUT = 30.0`, `_node_start_t`,
-  and timeout check in `_render()` that calls `os._exit(1)`
-- `/home/ryan/fastdds_no_shm.xml` (Pi only) — UDP-only FastDDS profile (see docs/pi-setup.md §15a)
-- `/etc/systemd/system/oled-display.service` (Pi only) — added `FASTRTPS_DEFAULT_PROFILES_FILE` env
+- `src/articubot_one/scripts/oled_display_node.py` — added `import os`, `DATA_TIMEOUT = 30.0`,
+  `_node_start_t`, and timeout check in `_render()` that calls `os._exit(1)`
+- `/etc/systemd/system/oled-display.service` (Pi only) — no special env vars; default FastDDS
