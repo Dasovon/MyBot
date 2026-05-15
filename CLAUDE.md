@@ -9,11 +9,13 @@ ROS 2 Humble differential drive robot. RPi 4 + ESP32-S3 (production stack — Ar
 - Nav2 autonomous navigation ✅ working (saved map at `~/mybot_ws/maps/my_map`)
 - RealSense D435 ✅ color + depth 640×480@15fps (RSUSB backend, fix #18)
 - **Pi fully restored after reflash** ✅: ROS Humble, mybot_ws, microros_ws, librealsense RSUSB, udev rules, SLAM map — all restored. Pi IP: 192.168.86.33
-- **ESP32-S3 full firmware validated and driving**:
+- **ESP32-S3 full firmware validated and driving smoothly** (fix #31):
   - Publishes: `/diff_cont/odom` (30Hz), `/imu/imu` (30Hz), `/battery_state` (1Hz)
   - Subscribes: `/diff_cont/cmd_vel_unstamped`
   - Robot stack launches with `mybot-launch` ✅
   - PID: Kp=30, Ki=150, KI_MAX=1.0, Kd=0
+  - EMA filter: VEL_ALPHA=0.2 (suppresses left encoder EMI noise)
+  - Command ramp: LIN_ACCEL=0.50 m/s², ANG_ACCEL=1.50 rad/s² (smooth start, instant stop)
 - **Waveshare 2.42" OLED display** ✅ FULLY WORKING (2026-05-15):
   - `oled-display.service` ENABLED, running as `ryan`, survives cold power cycle
   - Shows: IP, battery V/A, velocity, position, nav status — all data from ESP32
@@ -730,3 +732,85 @@ the correct motor control method and scan mode.
 **Files changed:**
 - `src/articubot_one/launch/rplidar.launch.py` — `rplidar_composition` → `rplidar_node`, removed `scan_mode`
 - `src/articubot_one/launch/launch_robot.launch.py` — `TimerAction(8s)` wrapping lidar launch
+
+### 31) Jerky motion after Pi SD reinstall — EMA filter + command ramp + integral preseed (2026-05-15)
+
+**Symptom:** After Pi SD card wipe and reinstall, robot drove jerkily during turns and straight-line
+motion. One wheel appeared to turn more than the other. Fast startup "punch" on first movement.
+"k" stop key left the robot coasting for ~1 second. Physical robot and wiring were unchanged.
+
+**Root cause 1 — Left encoder EMI noise:** GPIO40/41 (left encoder) pick up TB6612 1 kHz PWM
+switching noise from the motor power wires running nearby. Each noise burst adds phantom encoder
+counts, spiking the raw velocity reading by 10–13 rad/s above true velocity for one tick. At
+Kp=30, this caused a −60–105 PWM overcorrection every spike → physical jerk. The right encoder
+(GPIO42/39) was stable. This noise existed pre-reinstall but was masked by the Arduino stack's
+`diff_drive_controller` which had its own velocity smoothing. The direct micro-ROS path
+(ESP32 → cmd_vel → PID, no middleware smoothing) exposed it.
+
+**Root cause 2 — Command step-in:** `teleop_twist_keyboard` sends step changes in cmd_vel. With
+Kp=30 and a step to 5.88 rad/s wheel speed, the first PID tick produces 176 PWM — nearly full
+drive — causing the robot to lurch before settling.
+
+**Root cause 3 — Ramp stop coast:** When the command ramp is active, sending cmd=0 ("k" key)
+only starts the ramp decelerating at LIN_ACCEL rate. At 0.50 m/s² from 0.3 m/s, that's ~600 ms
+of continued motion after the stop key is pressed.
+
+**What did NOT work (tried in order):**
+- EMA alpha=0.4 + spike clip (VEL_SPIKE=3.5) feeding PID: clipped spikes still caused −60 PWM
+  corrections → still jerky
+- Using clip_l/clip_r directly for PID (no EMA lag): spike clips still caused −60 PWM jerk
+- Median-of-3 filter: introduced 33 ms feedback lag → PID oscillated during low-speed turns
+  (wheels bounced back and forth)
+- Slew rate on cmd target (LIN_ACCEL=0.5 m/s²): ramp step too small (0.49 rad/s/tick → 14.7 PWM)
+  to overcome motor deadband (≈45 PWM) — integral wound up then lurched
+
+**Fix — three parts applied together:**
+
+1. **EMA velocity filter (alpha=0.2)** on encoder feedback before PID. Attenuates spike amplitude
+   from ×3 above true to ×1.4 above true (0.2×spike + 0.8×true), keeping PID correction
+   below the motor deadband. Confirmed smooth turning and straight driving.
+   ```cpp
+   static constexpr float VEL_ALPHA = 0.2f;
+   vel_l_filt = VEL_ALPHA * vel_l + (1.0f - VEL_ALPHA) * vel_l_filt;
+   // PID uses vel_l_filt, not raw vel_l
+   ```
+
+2. **Command ramp** shapes cmd_vel before it reaches PID targets. Eliminates startup punch.
+   Stop command (both cmd_lin and cmd_ang ≈ 0) snaps ramp to zero immediately for crisp stop.
+   ```cpp
+   static constexpr float LIN_ACCEL = 0.50f;  // m/s²
+   static constexpr float ANG_ACCEL = 1.50f;  // rad/s²
+   if (fabsf(cmd_lin) < 0.01f && fabsf(cmd_ang) < 0.01f) {
+       ramp_lin = 0.0f; ramp_ang = 0.0f;  // snap to zero on stop
+   } else {
+       ramp_lin += constrain(cmd_lin - ramp_lin, -LIN_ACCEL*dt, LIN_ACCEL*dt);
+       ramp_ang += constrain(cmd_ang - ramp_ang, -ANG_ACCEL*dt, ANG_ACCEL*dt);
+   }
+   ```
+   Tuning ranges: LIN_ACCEL 0.30–0.80 m/s², ANG_ACCEL 1.00–2.00 rad/s².
+   Too low = sluggish feel. Too high = startup punch returns.
+
+3. **Integral preseed** on rest→move transition. The ramp's first step (e.g., 0.016 m/s =
+   0.49 rad/s wheel) only produces ~15 PWM from the P term — below motor deadband. Without
+   preseed, the integral winds up slowly then lurches. Preseed sets integral so that
+   `Kp×error + Ki×integral = 70 PWM` on the very first tick, starting the motor immediately
+   and gently.
+   ```cpp
+   // Fires only when pid.target was ~0 and new target is non-zero
+   if (fabsf(p.target) < 0.01f && fabsf(nt) > 0.01f) {
+       float s = (nt > 0) ? 1.0f : -1.0f;
+       p.integral = constrain(s * (70.0f - KP * fabsf(nt)) / KI, -KI_MAX, KI_MAX);
+   }
+   ```
+
+**Tuning values that felt right (2026-05-15):**
+- VEL_ALPHA = 0.2 (do not increase — higher alpha lets more noise through)
+- LIN_ACCEL = 0.50 m/s² (0.30 felt sluggish, 0.50 felt responsive)
+- ANG_ACCEL = 1.50 rad/s² (1.00 felt sluggish, 1.50 felt responsive)
+
+**Permanent hardware fix (not yet done):** Solder 100 nF ceramic caps from GPIO40 to GND and
+GPIO41 to GND at the ESP32 headers. This removes the EMI noise at source and eliminates the
+need for the EMA filter entirely.
+
+**Files changed:**
+- `src/esp32_microros/src/main.cpp` — EMA filter, command ramp, snap-to-zero stop, integral preseed
