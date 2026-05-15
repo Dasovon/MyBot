@@ -5,59 +5,23 @@
 ### What this project is
 ROS 2 Humble differential drive robot. RPi 4 + Arduino Nano (production stack). ESP32-S3 migration in progress to replace Arduino + Pi-side sensors. Based on Articulated Robotics tutorial series.
 
-### Current state (2026-05-14)
+### Current state (2026-05-15)
 - Nav2 autonomous navigation ✅ working (saved map at `~/mybot_ws/maps/my_map`)
 - RealSense D435 ✅ color + depth 640×480@15fps (RSUSB backend, fix #18)
-- **Pi fully restored after reflash** ✅ (2026-05-14): ROS Humble, mybot_ws, microros_ws, librealsense RSUSB, udev rules, SLAM map — all restored. Pi IP: 192.168.86.33
+- **Pi fully restored after reflash** ✅: ROS Humble, mybot_ws, microros_ws, librealsense RSUSB, udev rules, SLAM map — all restored. Pi IP: 192.168.86.33
 - **ESP32-S3 full firmware validated and driving**:
   - Publishes: `/diff_cont/odom` (30Hz), `/imu/imu` (30Hz), `/battery_state` (1Hz)
   - Subscribes: `/diff_cont/cmd_vel_unstamped`
   - Robot stack launches with `mybot-launch` ✅
   - PID: Kp=30, Ki=150, KI_MAX=1.0, Kd=0
-- **Waveshare 2.42" OLED display** ⚠️ hardware issue (2026-05-14):
-  - All wires verified correct. RST was on wrong pin (11→13 fixed this session).
-  - **ALL software paths exhausted** — display still completely dark
-  - oled-display.service DISABLED on Pi
+- **Waveshare 2.42" OLED display** ✅ WORKING (2026-05-15):
+  - `oled-display.service` ENABLED and running at boot
+  - Root cause of "dark display": RPi.GPIO requires user to be in `gpio`/`spi` groups — without group membership, GPIO scripts run silently with no errors but pins never change state. Looks identical to hardware failure.
+  - Fix: `sudo usermod -aG gpio,spi,i2c,dialout ryan` + log out/in
 
-### ⚠️ OLED display — hardware issue, resume here
-**All software confirmed working** (no exceptions, official Waveshare demo runs clean):
-- Hardware SPI mode 3 and mode 0 — dark
-- Software SPI (bit-bang) — dark  
-- Official Waveshare Python demo (gpiozero) — dark
-- Ran as sudo — dark
-
-**Wiring — all verified correct:**
-| Wire | Pi Pin |
-|---|---|
-| Red (VCC) | 1 (3.3V) |
-| Black (GND) | 6 |
-| Blue (DIN/MOSI) | 19 |
-| Green (DC) | 22 |
-| Yellow (CLK) | 23 |
-| Orange (CS) | 24 |
-| White (RST) | 13 ← was on pin 11, fixed |
-
-**Next hardware steps to try:**
-1. Move VCC (red) from pin 1 → pin 2 (5V) — rules out weak 3.3V supply
-2. Check flat flex cable on back of display PCB — ribbon connecting OLED glass to board
-3. If both fail, display is likely damaged
-
-**Code state:**
-- Debug commits `fd3b2ee` and `cf49017` still in main (0xA5 diagnostic) — revert when display fixed
-- 4px left text margin (x=4) is correct — keep it
-- `oled-display.service` DISABLED on Pi
-
-**Tools already on Pi:**
-- Official Waveshare demo: `~/waveshare_demo/OLED_Module_Code/RaspberryPi/python/`
-  Run: `cd ~/waveshare_demo/OLED_Module_Code/RaspberryPi/python && sudo python3 example/OLED_2in42_test.py`
-- python3-gpiozero installed ✅
-
-**Next steps:**
-1. Fix OLED hardware issue
-2. Re-enable oled-display.service + test boot
-3. Revert debug commits
-4. Object Tracking with OpenCV (final tutorial chapter)
-5. Jetson Nano setup (Docker + ROS 2 Humble + CUDA)
+### Next steps
+1. Object Tracking with OpenCV (final tutorial chapter)
+2. Jetson Nano setup (Docker + ROS 2 Humble + CUDA)
 
 ---
 

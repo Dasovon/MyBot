@@ -282,7 +282,7 @@ After=network.target
 [Service]
 User=ryan
 Environment="HOME=/home/ryan"
-ExecStart=/bin/bash -c 'source /opt/ros/humble/setup.bash && source /home/ryan/mybot_ws/install/setup.bash && ros2 run articubot_one oled_display_node.py'
+ExecStart=/bin/bash -c "source /opt/ros/humble/setup.bash && source /home/ryan/mybot_ws/install/setup.bash && ros2 run articubot_one oled_display_node.py"
 Restart=always
 RestartSec=5
 
