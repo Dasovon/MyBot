@@ -10,6 +10,7 @@ telnet encoder stream so the test can evaluate the wheel response directly.
 import argparse
 import csv
 import math
+import os
 import re
 import socket
 import signal
@@ -27,6 +28,56 @@ from sensor_msgs.msg import BatteryState, Imu
 
 
 DEFAULT_LOG = Path("/home/ryan/dev_ws/pid_sequence_log.csv")
+
+# Topics that can drive the robot — stale CLI publishers on any of these are
+# hazardous when enable_motion:=true is active on the Pi.
+_MOTION_TOPICS = (
+    "/cmd_vel_joy",
+    "/cmd_vel_raw",
+    "/cmd_vel",
+    "/diff_cont/cmd_vel_unstamped",
+)
+
+
+def _kill_stale_motion_publishers():
+    """Kill any ros2 topic pub/hz processes publishing to motion topics on this machine.
+
+    Stale publishers left over from previous test sessions or manual CLI
+    commands are dangerous when enable_motion:=true is active on the Pi:
+    twist_mux → vel_smoother → ESP32 is live and any nonzero command will
+    drive the robot.  /diff_cont/cmd_vel_unstamped publishers bypass
+    twist_mux entirely.
+    """
+    import subprocess as _sp
+
+    killed = 0
+    try:
+        result = _sp.run(["ps", "aux"], capture_output=True, text=True)
+        for line in result.stdout.splitlines():
+            if "ros2 topic pub" not in line and "ros2 topic hz" not in line:
+                continue
+            if not any(t in line for t in _MOTION_TOPICS):
+                continue
+            parts = line.split()
+            if len(parts) < 2:
+                continue
+            try:
+                pid = int(parts[1])
+                if pid == os.getpid():
+                    continue
+                os.kill(pid, signal.SIGTERM)
+                cmd_snippet = " ".join(parts[10:14]) if len(parts) > 13 else " ".join(parts[10:])
+                print(f"[cleanup] killed stale publisher PID {pid}: {cmd_snippet}", flush=True)
+                killed += 1
+            except (ProcessLookupError, ValueError, PermissionError):
+                pass
+    except Exception as exc:
+        print(f"[cleanup] warning: stale publisher scan failed: {exc}", flush=True)
+    if killed:
+        time.sleep(0.3)
+    return killed
+
+
 WHEEL_RADIUS = 0.034
 WHEEL_SEP = 0.179
 ENC_LINE_RE = re.compile(
@@ -655,11 +706,14 @@ class DriveSequenceRunner(Node):
         )
         self.log_file.flush()
 
-    def force_stop(self, duration=0.6):
+    def force_stop(self, duration=1.0):
+        # 1.0s covers vel_smoother's 0.5 m/s² ramp-to-zero from max command speed.
+        print("[stop] publishing zeros...", flush=True)
         end = time.monotonic() + duration
         while time.monotonic() < end:
             self.pub.publish(make_twist(0.0, 0.0))
-            time.sleep(0.1)
+            time.sleep(0.05)
+        print("[stop] done", flush=True)
 
     def close(self):
         self._enc_stop.set()
@@ -744,6 +798,7 @@ class DriveSequenceRunner(Node):
 
 def main():
     args = DriveSequenceRunner.parse_args()
+    _kill_stale_motion_publishers()
     rclpy.init()
     node = DriveSequenceRunner(args)
 
