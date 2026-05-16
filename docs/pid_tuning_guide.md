@@ -65,6 +65,11 @@ dev machine to capture and graph that output. Do not pull the Pi into this stage
 The bench auto-starts after boot, runs the PID segment, then continues into the
 power sweep, so no manual keypress is needed.
 
+For Pi-to-ESP32 communication checks, use the same Python runner with
+`--profile bridge`. It logs the same battery, odom, IMU, encoder, and command
+fields, but the command sequence is shorter and focuses on command delivery,
+stop recovery, and boot-zero behavior rather than gain tuning.
+
 ---
 
 ## Step 1 — Put Robot on Blocks
@@ -76,11 +81,11 @@ robot driving away or hitting walls.
 
 ## Step 2 — Baseline Test
 
-Run the automated test script to capture a baseline before changing anything:
+Run the automated bridge test script to capture a baseline before changing anything:
 
 ```bash
 # On dev machine
-ros2 run articubot_one pid_sequence_test.py --profile one_turn --turn-adaptive --turn-revolutions 1.0 --turn-extend-revolutions 1.0 --turn-max-revolutions 3.0 --turn-velocity-floor 0.50 --turn-wheel both --turn-linear 0.25 --turn-max-time 12.0 --log-rate 10 --encoder-host esp32-mybot.local --output /home/ryan/dev_ws/one_turn_log.csv
+ros2 run articubot_one pid_sequence_test.py --profile bridge --output /home/ryan/dev_ws/bridge_log.csv
 ```
 
 Or manually:
@@ -96,7 +101,7 @@ ros2 topic pub /cmd_vel geometry_msgs/msg/Twist \
 ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist '{}'
 ```
 
-Record: does motor start promptly? Does it track target? Does it oscillate?
+Record: does the command arrive cleanly, does motion stop when asked, and does the bridge stay quiet at boot until it is armed?
 
 ---
 

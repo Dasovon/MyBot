@@ -7,10 +7,11 @@ integration work.
 ## Goal
 
 1. Verify the wheel can complete a rotation cleanly on the ESP32 bench.
-2. Log velocity, not just encoder counts, so we can see ramp-up and ramp-down.
-3. Extend the test dynamically from 1 to 3 revolutions when motion stays
+2. Run the Pi-to-ESP32 bridge test with the same CSV fields as the PID runner.
+3. Log velocity, not just encoder counts, so we can see ramp-up and ramp-down.
+4. Extend the test dynamically from 1 to 3 revolutions when motion stays
    healthy, so smoothness can be judged over a longer span.
-4. Stop the motors after every run.
+5. Stop the motors after every run.
 
 ## What The Latest Log Showed
 
@@ -28,6 +29,7 @@ That means the next task is motion smoothness, not more count chasing.
 
 - Robot: differential drive, ESP32-S3 drive stack.
 - Primary tuning path: ESP32 bench firmware in `test/test_pid_bench`.
+- Bridge test path: same Python runner with `--profile bridge`.
 - Logging path: direct telnet to `esp32-mybot.local:23` from the dev machine.
 - Wheel diameter: 68 mm.
 - Wheel radius: 0.034 m.

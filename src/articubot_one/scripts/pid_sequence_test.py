@@ -110,6 +110,16 @@ def parse_step(token: str, default_duration: float, stop_hold: float) -> Step:
 
 
 def build_profile(name: str, duration: float, stop_hold: float) -> list[Step]:
+    if name == "bridge":
+        return [
+            parse_step("k", 1.0, 1.0),
+            parse_step("i", duration, stop_hold),
+            parse_step("k", 1.0, 1.0),
+            parse_step(",", duration, stop_hold),
+            parse_step("k", 1.0, 1.0),
+            parse_step("j", duration, stop_hold),
+            parse_step("k", 1.0, 1.0),
+        ]
     if name == "rebound":
         return [
             parse_step("i", duration, stop_hold),
@@ -600,7 +610,7 @@ class DriveSequenceRunner(Node):
         parser.add_argument(
             "--profile",
             default="rebound",
-            choices=["rebound", "power", "straight", "turns", "one_turn"],
+            choices=["bridge", "rebound", "power", "straight", "turns", "one_turn"],
             help="predefined teleop-style sequence",
         )
         parser.add_argument(
