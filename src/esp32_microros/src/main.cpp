@@ -53,6 +53,7 @@ static constexpr float KD            =   0.0f;
 static constexpr float KI            =   9.0f;
 static constexpr float KI_MAX        =  24.0f;
 static constexpr float START_PWM_SEED = 120.0f;  // PWM at first tick from standstill
+static constexpr float RUN_PWM_FLOOR  =  72.0f;    // keep any active command above the deadband while target is nonzero
 
 
 // ── Velocity lowpass filter ───────────────────────────────────────────
@@ -65,6 +66,7 @@ static constexpr float REVERSAL_COAST_VEL = 3.0f;  // rad/s: coast before revers
 static float cmd_lin = 0.0f, cmd_ang = 0.0f;
 static constexpr uint32_t CMD_TIMEOUT_MS = 1000;
 static uint32_t t_cmd_last  = 0;
+static bool motion_armed = false;
 
 struct PID { float target = 0.0f, prev_err = 0.0f, integral = 0.0f; };
 static PID pid_l, pid_r;
@@ -84,6 +86,9 @@ static int pid_compute(PID& p, float actual, float dt) {
     p.integral = constrain(p.integral + err * dt, -KI_MAX, KI_MAX);
     float out = KP * err + KD * (err - p.prev_err) / dt + KI * p.integral;
     p.prev_err = err;
+    if (fabsf(p.target) >= 0.01f && fabsf(out) < RUN_PWM_FLOOR) {
+        out = copysignf(RUN_PWM_FLOOR, p.target);
+    }
     out = constrain(out, -255.0f, 255.0f);
     return (int)out;
 }
@@ -170,6 +175,7 @@ static void reset_motion_state() {
     cmd_lin = 0.0f;
     cmd_ang = 0.0f;
     t_cmd_last = 0;
+    motion_armed = false;
     motors_stop();
 }
 
@@ -179,6 +185,9 @@ static void cmd_cb(const void* msg) {
     cmd_lin = m->linear.x;
     cmd_ang = m->angular.z;
     t_cmd_last = millis();
+    if (fabsf(cmd_lin) < 0.01f && fabsf(cmd_ang) < 0.01f) {
+        motion_armed = true;
+    }
 }
 
 // ── micro-ROS entity management ───────────────────────────────────────
@@ -199,7 +208,7 @@ static bool create_entities() {
             ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, BatteryState),
             "/battery_state") != RCL_RET_OK) return false;
 
-    if (rclc_subscription_init_default(&sub_cmd, &node,
+    if (rclc_subscription_init_best_effort(&sub_cmd, &node,
             ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
             "/diff_cont/cmd_vel_unstamped") != RCL_RET_OK) return false;
 
@@ -345,6 +354,7 @@ void loop() {
                 if (t_cmd_last > 0 && (now - t_cmd_last) > CMD_TIMEOUT_MS) {
                     cmd_lin = 0.0f;
                     cmd_ang = 0.0f;
+                    motion_armed = false;
                 }
 
                 // Commands arrive directly from twist_mux on the Pi; the ESP32 applies its own
@@ -354,7 +364,8 @@ void loop() {
 
                 // Preseed integral on rest→move transition so first tick delivers
                 // START_PWM_SEED PWM — overcomes motor deadband without Kd overshoot.
-                auto preseed = [](PID& p, float nt) {
+                auto preseed = [&](PID& p, float nt) {
+                    if (!motion_armed) return;
                     if (fabsf(p.target) < 0.01f && fabsf(nt) > 0.01f) {
                         float s = (nt > 0.0f) ? 1.0f : -1.0f;
                         p.integral = constrain(
@@ -365,6 +376,12 @@ void loop() {
                 preseed(pid_l, tl);
                 preseed(pid_r, tr);
 
+                if (!motion_armed && (fabsf(tl) >= 0.01f || fabsf(tr) >= 0.01f)) {
+                    tl = 0.0f;
+                    tr = 0.0f;
+                    pid_l.target = 0.0f;
+                    pid_r.target = 0.0f;
+                }
                 pid_l.target = tl;
                 pid_r.target = tr;
 
@@ -434,6 +451,7 @@ void loop() {
                 t_ping = now;
                 if (rmw_uros_ping_agent(500, 3) != RMW_RET_OK) {
                     pid_l.target = 0.0f; pid_r.target = 0.0f;
+                    motion_armed = false;
                     motors_stop();
                     destroy_entities();
                     state = WAITING;

@@ -12,6 +12,7 @@ from launch_ros.actions import Node
 def generate_launch_description():
 
     package_name = 'articubot_one'
+    esp32_serial = '/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:5C:23:1C-if00'
 
     rsp = IncludeLaunchDescription(
                 PythonLaunchDescriptionSource([os.path.join(
@@ -39,7 +40,7 @@ def generate_launch_description():
     micro_ros_agent = Node(
         package='micro_ros_agent',
         executable='micro_ros_agent',
-        arguments=['serial', '--dev', '/dev/ttyACM0'],
+        arguments=['serial', '--dev', esp32_serial],
         output='screen',
     )
 

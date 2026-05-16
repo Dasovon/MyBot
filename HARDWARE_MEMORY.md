@@ -12,7 +12,7 @@ Dev Machine (ROS tools / teleop / RViz2 / Nav2 / EKF)
 
 Raspberry Pi (ROS 2 Humble) — 192.168.86.33
 ├── robot_state_publisher
-├── micro_ros_agent (serial /dev/ttyACM0) ← ESP32-S3
+├── micro_ros_agent (serial /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:5C:23:1C-if00) ← ESP32-S3
 ├── twist_mux
 ├── rplidar_node → /scan (/dev/rplidar)
 ├── realsense2_camera_node → /camera/*
@@ -34,9 +34,9 @@ Legacy reference:
 ## Serial Links
 
 ### ESP32-S3 (micro-ROS)
-Device: /dev/ttyACM0  (HWCDC native USB — no udev symlink needed)
+Device: /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:5C:23:1C-if00  (HWCDC native USB)
 Protocol: micro-ROS serial transport
-Agent: `source ~/microros_ws/install/setup.bash && ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyACM0`
+Agent: `source ~/microros_ws/install/setup.bash && ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:5C:23:1C-if00`
 
 ### RPLidar
 Device: /dev/rplidar  (udev symlink → CP2102, 10c4:ea60)
@@ -202,7 +202,7 @@ Power distribution board: **DFR0205** (DFRobot DC-DC buck converter, 3.6–25V i
 ```
 12V LiPo/Lead-acid battery
 ├── DFR0205 regulated 5V ──────────→ Raspberry Pi (USB-C)
-│       ├── Pi USB port ───────────→ ESP32-S3 (power + serial/OTA, /dev/ttyACM0)
+│       ├── Pi USB port ───────────→ ESP32-S3 (power + serial/OTA, stable by-id path)
 │       ├── Pi USB port ───────────→ RPLidar A1 (power + serial, /dev/rplidar)
 │       ├── Pi USB 3.0 ────────────→ RealSense D435 (power + USB 3)
 │       └── Pi 3.3V (GPIO) ────────→ Waveshare OLED (~20mA, SPI0)
@@ -217,14 +217,15 @@ Ground must be common between: Pi, ESP32-S3, TB6612, encoders, DFR0205.
 
 ## Known Good Bringup Sequence
 
-1. Plug ESP32-S3 USB (ttyACM0) and RPLidar USB into Pi
-2. Verify devices: ls /dev/ttyACM0 /dev/rplidar
+1. Plug ESP32-S3 USB and RPLidar USB into Pi
+2. Verify devices: ls /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:5C:23:1C-if00 /dev/rplidar
 3. Source workspace: source ~/mybot_ws/install/setup.bash && source ~/microros_ws/install/setup.bash
 4. Confirm robot-launch.service is active, or run `mybot-launch` for a manual restart
 5. On dev machine: source ~/dev_ws/install/setup.bash
 
 mybot-launch alias (in ~/.bashrc on Pi):
 Runs launch_robot.launch.py which starts micro_ros_agent, twist_mux, rplidar, realsense2_camera, robot_state_publisher. The current launch path sends `twist_mux` directly to `/diff_cont/cmd_vel_unstamped`.
+Low-level PID tuning is done on the ESP32 bench firmware in `src/esp32_microros/test/test_pid_bench`; the Pi bridge is for integration runs.
 
 ---
 
@@ -301,7 +302,7 @@ ISR: Left A==B → forward, Right A!=B → forward. ENC_CPR=1010, radius=0.034m.
 
 micro-ROS Transport — USB serial via native HWCDC:
 ```
-ESP32-S3 native USB port → USB cable → Pi /dev/ttyACM0
+ESP32-S3 native USB port → USB cable → Pi stable by-id device
 build_flags = -DARDUINO_USB_CDC_ON_BOOT=1  (routes Serial to HWCDC)
 WiFi used only for OTA and TelnetStream monitoring
 ```
@@ -310,7 +311,7 @@ micro-ROS agent (built from source in ~/microros_ws — not in apt for arm64):
 ```bash
 source /opt/ros/humble/setup.bash
 source ~/microros_ws/install/setup.bash
-ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyACM0
+ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:5C:23:1C-if00
 ```
 
 Topics: publishes `/diff_cont/odom`, `/imu/imu`, `/battery_state`

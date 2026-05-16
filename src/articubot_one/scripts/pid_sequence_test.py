@@ -36,6 +36,8 @@ ENC_LINE_RE = re.compile(
     r"filt=(?P<filt_l>-?\d+(?:\.\d+)?)/(?P<filt_r>-?\d+(?:\.\d+)?)"
 )
 
+ARM_SECONDS = 2.0
+
 
 @dataclass(frozen=True)
 class Step:
@@ -155,14 +157,27 @@ class DriveSequenceRunner(Node):
     def __init__(self, args):
         super().__init__("pid_sequence_test")
         self.args = args
+
+        # Turn state must be initialised before _build_steps so that the
+        # profile-specific values set inside _build_steps are not overwritten.
+        self._turn_started_at = None
+        self._turn_goal_counts = 0
+        self._turn_goal_revs = 0.0
+        self._turn_max_counts = 0
+        self._turn_extend_counts = 0
+        self._turn_velocity_floor = args.turn_velocity_floor
+        self._turn_adaptive = args.turn_adaptive
+
         self.steps = self._build_steps(args)
         self.repeats_left = max(1, args.repeats)
         self.sequence_index = 0
-        self.phase = "warmup"
+        self.phase = "arm"
         self.phase_started = time.monotonic()
         self.current_step = self.steps[0]
         self.done = False
         self.interrupted = False
+        self._preflight_started_at = None
+        self._preflight_tgt_seen = False
 
         self.latest_battery = None
         self.latest_imu = None
@@ -173,7 +188,6 @@ class DriveSequenceRunner(Node):
         self.latest_cmd = make_twist(0.0, 0.0)
         self._state_lock = threading.Lock()
         self._enc_stop = threading.Event()
-        self._turn_started_at = None
 
         self.pub = self.create_publisher(Twist, args.command_topic, 10)
         self.create_subscription(BatteryState, "/battery_state", self._on_battery, 10)
@@ -209,46 +223,43 @@ class DriveSequenceRunner(Node):
             "max_abs_enc_filt_r": 0.0,
             "max_abs_enc_cnt_l": 0,
             "max_abs_enc_cnt_r": 0,
+            "turn_goal_cnt": 0,
         }
         self._enc_thread = threading.Thread(target=self._enc_monitor_loop, daemon=True)
         self._enc_thread.start()
-        if args.profile == "one_turn" and not args.no_encoder_reset:
-            self._send_encoder_reset()
+        # Encoder reset happens after preflight succeeds (see _advance)
 
         self.log_path = Path(args.output).expanduser()
         self.log_file = self.log_path.open("w", newline="")
         self.writer = csv.writer(self.log_file)
-        self.writer.writerow(
-            [
-                "wall_time",
-                "elapsed_s",
-                "run",
-                "step_index",
-                "phase",
-                "key",
-                "label",
-                "cmd_lin",
-                "cmd_ang",
-                "battery_v",
-                "current_a",
-                "power_w",
-                "raw_vx",
-                "raw_wz",
-                "ekf_vx",
-                "ekf_wz",
-                "imu_yaw_deg",
-                "imu_gyro_z",
-                "imu_accel_x",
-                "cmd_wheel_l",
-                "cmd_wheel_r",
-                "enc_cnt_l",
-                "enc_cnt_r",
-                "enc_act_l",
-                "enc_act_r",
-                "enc_filt_l",
-                "enc_filt_r",
-            ]
-        )
+        # Metadata rows (prefixed with '#') — readable by scripts that skip comment lines
+        self.writer.writerow(["# test_date", time.strftime("%Y-%m-%d %H:%M:%S")])
+        self.writer.writerow(["# profile", args.profile or "custom"])
+        self.writer.writerow(["# command_topic", args.command_topic])
+        self.writer.writerow(["# turn_revolutions", args.turn_revolutions])
+        self.writer.writerow(["# turn_max_revolutions", args.turn_max_revolutions])
+        self.writer.writerow(["# turn_extend_revolutions", args.turn_extend_revolutions])
+        self.writer.writerow(["# turn_linear_ms", args.turn_linear])
+        self.writer.writerow(["# turn_velocity_floor", args.turn_velocity_floor])
+        self.writer.writerow(["# turn_adaptive", args.turn_adaptive])
+        self.writer.writerow(["# turn_max_time_s", args.turn_max_time])
+        self.writer.writerow(["# turn_counts_per_rev", args.turn_counts_per_rev])
+        self.writer.writerow(["# log_rate_hz", args.log_rate])
+        self.writer.writerow(["# command_rate_hz", args.command_rate])
+        self.writer.writerow(["# warmup_s", args.warmup])
+        self.writer.writerow([
+            "wall_time", "elapsed_s", "run", "phase", "key", "label",
+            "cmd_lin", "cmd_ang",
+            "battery_v", "current_a", "power_w",
+            "raw_vx", "raw_wz", "ekf_vx", "ekf_wz",
+            "imu_yaw_deg", "imu_gyro_z", "imu_accel_x",
+            "cmd_wheel_l", "cmd_wheel_r",
+            "enc_cnt_l", "enc_cnt_r",
+            "enc_tgt_l", "enc_tgt_r",
+            "enc_act_l", "enc_act_r",
+            "enc_filt_l", "enc_filt_r",
+            "turn_goal_cnt",
+        ])
 
         self.get_logger().info(
             f"logging to {self.log_path} | profile={args.profile or 'custom'} | repeats={self.repeats_left} | warmup={self.warmup_seconds}s"
@@ -258,6 +269,13 @@ class DriveSequenceRunner(Node):
         if args.sequence:
             return parse_sequence(args.sequence, args.duration, args.stop_hold)
         if args.profile == "one_turn":
+            self._turn_goal_revs = max(0.1, float(args.turn_revolutions))
+            self._turn_goal_counts = max(1, int(round(args.turn_counts_per_rev * self._turn_goal_revs)))
+            self._turn_max_counts = max(
+                self._turn_goal_counts,
+                int(round(args.turn_counts_per_rev * max(self._turn_goal_revs, float(args.turn_max_revolutions)))),
+            )
+            self._turn_extend_counts = max(1, int(round(args.turn_counts_per_rev * float(args.turn_extend_revolutions))))
             return [
                 Step(
                     key="i",
@@ -309,6 +327,15 @@ class DriveSequenceRunner(Node):
                 self.summary["max_abs_enc_filt_l"] = max(self.summary["max_abs_enc_filt_l"], abs(sample["filt_l"]))
                 self.summary["max_abs_enc_filt_r"] = max(self.summary["max_abs_enc_filt_r"], abs(sample["filt_r"]))
 
+    def _turn_motion_alive(self, enc):
+        if not enc:
+            return False
+        if self.args.turn_wheel == "left":
+            return abs(float(enc.get("act_l", 0.0))) >= self._turn_velocity_floor
+        if self.args.turn_wheel == "right":
+            return abs(float(enc.get("act_r", 0.0))) >= self._turn_velocity_floor
+        return min(abs(float(enc.get("act_l", 0.0))), abs(float(enc.get("act_r", 0.0)))) >= self._turn_velocity_floor
+
     def _send_encoder_reset(self):
         host = self.args.encoder_host
         port = self.args.encoder_port
@@ -357,29 +384,64 @@ class DriveSequenceRunner(Node):
                     break
 
     def _current_cmd(self):
+        if self.phase == "arm":
+            return 0.0, 0.0
+        if self.phase == "preflight":
+            return self.steps[0].linear if self.steps else 0.0, 0.0
         if self.phase == "active":
             return self.current_step.linear, self.current_step.angular
         return 0.0, 0.0
 
     def _step_done(self):
+        if self.phase == "arm":
+            return (time.monotonic() - self.phase_started) >= ARM_SECONDS
+        if self.phase == "preflight":
+            now = time.monotonic()
+            if self._preflight_started_at is None:
+                self._preflight_started_at = now
+            elapsed = now - self._preflight_started_at
+            with self._state_lock:
+                enc = self.latest_enc or {}
+            if enc:
+                tgt_l = abs(float(enc.get("tgt_l", 0.0)))
+                expected = (self.steps[0].linear / WHEEL_RADIUS) if self.steps else 0.0
+                if tgt_l > 0.5 * expected:
+                    self._preflight_tgt_seen = True
+                    return True
+            if elapsed > 5.0:
+                self.get_logger().error(
+                    "[PREFLIGHT FAILED] ESP32 firmware target stayed 0 while publishing "
+                    f"{self.steps[0].linear if self.steps else 0:.2f} m/s. "
+                    "The micro_ros_agent DDS bridge is stuck — commands are not reaching the ESP32. "
+                    "Fix: sudo systemctl restart robot-launch.service (may need 2-3 attempts after OTA flash)"
+                )
+                self.done = True
+                return True
+            return False
         if self.args.profile == "one_turn" and self.phase == "active":
             with self._state_lock:
                 enc = self.latest_enc_counts or {}
             if enc:
                 left = abs(int(enc.get("cnt_l", 0)))
                 right = abs(int(enc.get("cnt_r", 0)))
-                target = self.args.turn_target_counts
+                target = self._turn_goal_counts
                 if self._turn_started_at is None:
                     self._turn_started_at = time.monotonic()
                 if self.args.turn_wheel == "left":
-                    if left >= target:
-                        return True
+                    reached = left >= target
                 elif self.args.turn_wheel == "right":
-                    if right >= target:
-                        return True
+                    reached = right >= target
                 else:
-                    if min(left, right) >= target:
-                        return True
+                    reached = min(left, right) >= target
+                if reached:
+                    if self._turn_adaptive and self._turn_goal_counts < self._turn_max_counts and self._turn_motion_alive(enc):
+                        self._turn_goal_counts = min(self._turn_max_counts, self._turn_goal_counts + self._turn_extend_counts)
+                        self.get_logger().info(
+                            f"adaptive turn target extended to {self._turn_goal_counts} counts "
+                            f"({self._turn_goal_counts / self.args.turn_counts_per_rev:.2f} rev)"
+                        )
+                        return False
+                    return True
                 if (time.monotonic() - self._turn_started_at) >= self.args.turn_max_time:
                     self.get_logger().warn("one_turn timeout reached before target count")
                     return True
@@ -390,6 +452,22 @@ class DriveSequenceRunner(Node):
         )
 
     def _advance(self):
+        if self.phase == "arm":
+            self.phase = "preflight"
+            self.phase_started = time.monotonic()
+            self._publish_zero()
+            return
+
+        if self.phase == "preflight":
+            self._publish_zero()
+            if not self.done:
+                self.get_logger().info("preflight OK — commands reaching ESP32")
+                if self.args.profile == "one_turn" and not self.args.no_encoder_reset:
+                    self._send_encoder_reset()
+                self.phase = "warmup"
+                self.phase_started = time.monotonic()
+            return
+
         if self.phase == "warmup":
             self.phase = "active"
             self.phase_started = time.monotonic()
@@ -451,6 +529,7 @@ class DriveSequenceRunner(Node):
         cmd_wheel_r = (self.latest_cmd.linear.x + self.latest_cmd.angular.z * WHEEL_SEP * 0.5) / WHEEL_RADIUS
         self.summary["max_abs_cmd_wheel_l"] = max(self.summary["max_abs_cmd_wheel_l"], abs(cmd_wheel_l))
         self.summary["max_abs_cmd_wheel_r"] = max(self.summary["max_abs_cmd_wheel_r"], abs(cmd_wheel_r))
+        self.summary["turn_goal_cnt"] = self._turn_goal_counts
 
         battery_v = current_a = ""
         power_w = ""
@@ -494,10 +573,13 @@ class DriveSequenceRunner(Node):
                 cmd_wheel_r,
                 enc.get("cnt_l", ""),
                 enc.get("cnt_r", ""),
+                enc.get("tgt_l", ""),
+                enc.get("tgt_r", ""),
                 enc.get("act_l", ""),
                 enc.get("act_r", ""),
                 enc.get("filt_l", ""),
                 enc.get("filt_r", ""),
+                self._turn_goal_counts,
             ]
         )
         self.log_file.flush()
@@ -531,8 +613,8 @@ class DriveSequenceRunner(Node):
         parser.add_argument("--warmup", type=float, default=2.0, help="seconds to wait before starting the sequence")
         parser.add_argument(
             "--command-topic",
-            default="/cmd_vel_raw",
-            help="topic to publish commands on (default matches the active teleop path)",
+            default="/cmd_vel_joy",
+            help="topic to publish commands on; /cmd_vel_joy routes through twist_mux at highest priority",
         )
         parser.add_argument(
             "--encoder-host",
@@ -546,7 +628,7 @@ class DriveSequenceRunner(Node):
             help="port for the ESP32 telnet encoder stream",
         )
         parser.add_argument("--command-rate", type=float, default=10.0, help="publish rate while moving")
-        parser.add_argument("--log-rate", type=float, default=4.0, help="CSV sample rate")
+        parser.add_argument("--log-rate", type=float, default=10.0, help="CSV sample rate")
         parser.add_argument("--output", default=str(DEFAULT_LOG), help="CSV output file")
         parser.add_argument(
             "--turn-wheel",
@@ -554,9 +636,33 @@ class DriveSequenceRunner(Node):
             choices=["left", "right", "both"],
             help="which wheel counts toward the one-turn stop condition",
         )
-        parser.add_argument("--turn-target-counts", type=int, default=1010, help="encoder counts required to stop")
+        parser.add_argument("--turn-counts-per-rev", type=float, default=1010.0, help="encoder counts per revolution")
+        parser.add_argument("--turn-revolutions", type=float, default=1.0, help="initial target revolutions")
+        parser.add_argument(
+            "--turn-adaptive",
+            action="store_true",
+            help="extend the target in rev-sized steps while wheel velocity stays above the floor",
+        )
+        parser.add_argument(
+            "--turn-extend-revolutions",
+            type=float,
+            default=1.0,
+            help="revolutions to add each time the current target is met in adaptive mode",
+        )
+        parser.add_argument(
+            "--turn-max-revolutions",
+            type=float,
+            default=50.0,
+            help="maximum revolutions to allow in adaptive mode",
+        )
+        parser.add_argument(
+            "--turn-velocity-floor",
+            type=float,
+            default=0.50,
+            help="minimum encoder wheel speed required to extend an adaptive turn",
+        )
         parser.add_argument("--turn-linear", type=float, default=0.20, help="linear command during one-turn test")
-        parser.add_argument("--turn-max-time", type=float, default=10.0, help="safety timeout for one-turn test")
+        parser.add_argument("--turn-max-time", type=float, default=120.0, help="safety timeout for one-turn test")
         parser.add_argument(
             "--no-encoder-reset",
             action="store_true",
@@ -625,6 +731,7 @@ def main():
             f"cmd_wheel|max|={summary['max_abs_cmd_wheel_l']:.3f}/{summary['max_abs_cmd_wheel_r']:.3f} "
             f"enc_max|cnt|={summary['max_abs_enc_cnt_l']}/{summary['max_abs_enc_cnt_r']} "
             f"enc_max|act|={summary['max_abs_enc_act_l']:.3f}/{summary['max_abs_enc_act_r']:.3f} "
+            f"turn_goal_cnt={summary['turn_goal_cnt']} "
             f"enc_ratio={enc_ratio_l_str}/{enc_ratio_r_str}",
             flush=True,
         )

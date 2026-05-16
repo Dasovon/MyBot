@@ -86,7 +86,8 @@ Dev machine (Ubuntu 22.04)
 
 Raspberry Pi 4
   ├── robot_state_publisher
-  ├── twist_mux              → /diff_cont/cmd_vel_unstamped
+  ├── twist_mux              → /cmd_vel_raw
+  ├── vel_smoother.py        → /diff_cont/cmd_vel_unstamped
   ├── micro_ros_agent       ↔ ESP32-S3 micro-ROS bridge
   ├── rplidar_composition    → /scan
   ├── realsense2_camera      → /camera/camera/{color,depth}/...
@@ -107,7 +108,7 @@ The ESP32-S3 replaced both the Arduino Nano and Pi-side BNO055/INA219 I2C nodes.
 
 ```
 Raspberry Pi 4
-  ├── micro_ros_agent (~/microros_ws, serial /dev/ttyACM0)
+  ├── micro_ros_agent (~/microros_ws, serial /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:5C:23:1C-if00)
   └── oled-display.service (systemd, starts at boot)
 
         ↕ USB serial — native HWCDC (ARDUINO_USB_CDC_ON_BOOT=1)
@@ -120,6 +121,8 @@ ESP32-S3 (Lonely Binary expansion base)
   └── subscribes /diff_cont/cmd_vel_unstamped
 
 WiFi → OTA flashing + TelnetStream monitor (port 23)
+
+Bench tuning lives in `src/esp32_microros/test/test_pid_bench` and runs without the Pi bridge.
 ```
 
 ---
@@ -333,7 +336,7 @@ See [`docs/pin-mapping.md`](docs/pin-mapping.md) for full tables. Key assignment
 | BNO055 + INA219 SCL | 9 |
 | Left encoder A/B | 40 / 41 |
 | Right encoder A/B | 42 / 39 |
-| micro-ROS transport | native USB → Pi `/dev/ttyACM0` |
+| micro-ROS transport | native USB → Pi `/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:5C:23:1C-if00` |
 
 ---
 

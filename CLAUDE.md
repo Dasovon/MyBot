@@ -5,7 +5,7 @@
 ### What this project is
 ROS 2 Humble differential drive robot. RPi 4 + ESP32-S3 (production stack — Arduino Nano replaced). Based on Articulated Robotics tutorial series.
 
-### Current state (2026-05-15)
+### Current state (2026-05-16)
 - Nav2 autonomous navigation ✅ working (saved map at `~/mybot_ws/maps/my_map`)
 - RealSense D435 ✅ color + depth 640×480@15fps (RSUSB backend, fix #18)
 - **Pi fully restored after reflash** ✅: ROS Humble, mybot_ws, microros_ws, librealsense RSUSB, udev rules, SLAM map — all restored. Pi IP: 192.168.86.33
@@ -13,6 +13,8 @@ ROS 2 Humble differential drive robot. RPi 4 + ESP32-S3 (production stack — Ar
   - Publishes: `/diff_cont/odom` (30Hz), `/imu/imu` (30Hz), `/battery_state` (1Hz)
   - Subscribes: `/diff_cont/cmd_vel_unstamped`
   - Robot stack auto-starts with `robot-launch.service`; `mybot-launch` remains the manual restart path
+  - `micro_ros_agent` now targets the stable USB by-id path:
+    `/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:5C:23:1C-if00`
   - **PID (fix #34)**: Kp=20, Ki=5, Kd=0, KI_MAX=10, START_PWM_SEED=55
     - Kd removed: caused ~90% overshoot with EMA lag on ramp inputs
     - Preseed: on 0→nonzero transition, integral preset so first tick = 55 PWM (above deadband)
@@ -26,6 +28,11 @@ ROS 2 Humble differential drive robot. RPi 4 + ESP32-S3 (production stack — Ar
   - **Teleop must use `repeat_rate:=10.0`**: `ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p repeat_rate:=10.0`
   - If agent shows stuck/AGENT OFFLINE after OTA reboot: `sudo systemctl restart robot-launch.service`
   - See `docs/pid_tuning_guide.md` for full tuning procedure and starting values
+- **ESP32 bench tuning path** (2026-05-16):
+  - `src/esp32_microros/test/test_pid_bench` now auto-runs after boot
+  - Bench sequence: PID rotation run, then power sweep, then stop
+  - Low-level tuning no longer depends on the Pi bridge
+  - Use the dev machine to capture the ESP32 telnet log for graphs
 - **Waveshare 2.42" OLED display** ✅ FULLY WORKING (2026-05-15):
   - `oled-display.service` ENABLED, running as `ryan`, survives cold power cycle
   - Shows: IP, battery V/A, velocity, position, nav status — all data from ESP32
@@ -291,9 +298,9 @@ pio run --target upload           # USB (first time)
 pio run -e esp32-s3-ota --target upload  # OTA (all future)
 nc esp32-mybot.local 23           # wireless monitor
 
-# micro-ROS agent on Pi — ESP32-S3 connected via native USB (ttyACM0)
+# micro-ROS agent on Pi — ESP32-S3 connected via native USB by-id path
 source ~/microros_ws/install/setup.bash
-ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyACM0
+ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:5C:23:1C-if00
 ```
 
 ### Dev workspace setup (one-time, on dev machine)
@@ -587,7 +594,7 @@ File: `src/articubot_one/launch/launch_robot.launch.py`
 
 Removed: `controller_manager`, `delayed_controller_manager`, `diff_drive_spawner`, `joint_broad_spawner`, bno055 node, ina219 node, `robot_description` variable, `controller_params_file`, `Command`/`RegisterEventHandler`/`OnProcessStart` imports.
 
-Added: `micro_ros_agent` Node (`ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyACM0`).
+Added: `micro_ros_agent` Node (`ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:5C:23:1C-if00`).
 
 Note: `micro_ros_agent` is built from source in `~/microros_ws` on Pi (not in apt for arm64). The mybot-launch alias was updated to `source ~/microros_ws/install/setup.bash` before launch.
 

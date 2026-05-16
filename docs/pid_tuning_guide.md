@@ -5,63 +5,64 @@
 | Component | Value |
 |---|---|
 | Robot | Differential drive, JGA25-371 130RPM 45:1 |
-| Controller | ESP32-S3 → micro-ROS → Pi |
+| Controller | ESP32-S3 bench mode for tuning; micro-ROS + Pi for integration |
 | Wheel diameter | 68 mm |
 | Wheel radius | 0.034 m |
 | Wheel separation | 0.179 m |
 | Encoder CPR | 1010 counts/rev |
 | Control loop | 30 Hz (33 ms/tick) |
-| Pi-side smoother | none in current deployment; `twist_mux` feeds the ESP32 directly |
+| Pi-side smoother | repo custom `vel_smoother.py` in the launch path for integration runs; not used by the ESP32 bench |
 | Telnet monitor | `nc esp32-mybot.local 23` |
 | Enc log format | `[enc] tgt=L/R act=L/R filt=L/R` (rad/s, 1 Hz) |
 
-**Key difference from standard tuning**: the ESP32 sees direct `cmd_vel` targets
-from `twist_mux`, then applies its own timeout, integral preseed, and motor PWM
-slew/reversal handling. Kd is still not useful for startup in this robot because
-the EMA encoder filter adds lag and the motors have a hard deadband.
+**Key difference from standard tuning**: the Pi launch stack includes the repo's
+`vel_smoother.py`, which limits step changes before the ESP32 sees them. The
+ESP32 still applies its own timeout, integral preseed, and motor PWM
+sustain/reversal handling. Kd is still not useful for startup in this robot
+because the EMA encoder filter adds lag and the motors have a hard deadband.
 Startup mechanism is **integral preseed** instead.
+The ESP32 also requires an explicit zero command after boot or reconnect before
+it will arm motion, so stale nonzero commands cannot start the wheels at boot.
+For low-level motor tuning, use the ESP32 bench firmware in
+`src/esp32_microros/test/test_pid_bench` and capture logs on the dev machine
+over telnet. The Pi stays out of this loop until the wheel motion is already
+smooth.
 
-**Current test note**: the one-turn encoder test now reaches a full wheel
-rotation, but the motion is still stop-and-go instead of smooth continuous
-drive. Fix that first before spending more time on PID gain changes or longer
-rotation tests.
+**Current test note**: the one-turn encoder test was stalling in a stop-and-go
+pattern. I added a sustain-floor in the motor controller, raised the test log
+rate, and added adaptive rotation targets so the run can extend from 1 to 3
+revolutions when the wheel stays in motion. The latest rerun reached a full
+rotation again, so the next step is to tighten smoothness before longer tests.
+
+For the exact Claude Code CLI task script, see
+[claude_code_pid_test_instructions.md](./claude_code_pid_test_instructions.md).
 
 ---
 
-## Step 0 — Verify the Pipeline First
+## Step 0 — Use The ESP32 Bench First
 
-Before tuning anything, confirm commands reach the ESP32:
+Before tuning anything on the Pi stack, confirm the direct ESP32 bench path:
 
 ```bash
-# Terminal 1: monitor ESP32 over telnet
+# Terminal 1: monitor the ESP32 over telnet
 nc esp32-mybot.local 23
 
-# Terminal 2: send a command and watch tgt in telnet
-source /opt/ros/humble/setup.bash
-ros2 topic pub /cmd_vel geometry_msgs/msg/Twist \
-  '{linear: {x: 0.2}, angular: {z: 0.0}}' --rate 10
+# Terminal 2: tell the ESP32 to run a bench test
+#   t = PID bench
+#   p = power sweep
+#   r = reset encoders
+#   s = stop motors
 ```
 
-**Pass**: telnet shows `tgt=5.88/5.88` (0.2 m/s → 5.88 rad/s each wheel).
-**Fail**: tgt stays 0.00 even though motors spin — pipeline broken.
-  Fix: `ssh ryan@mybot "sudo systemctl restart robot-launch.service"` then retry.
+**Pass**: telnet shows `[bench]` lines with `tgt=7.35/7.35` and counts rising
+smoothly through the run.
+**Fail**: counts or velocity stall in bursts.
 
-**Stop motors between every test:**
-```bash
-ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist '{}'
-```
-
-For repeatable comparisons, use the test runner:
-```bash
-ros2 run articubot_one pid_sequence_test.py --profile rebound --output /home/ryan/dev_ws/pid_sequence_log.csv
-```
-It publishes a fixed sequence, forces a zero-command stop after every move, logs the
-robot response to CSV for graphing, and connects to the ESP32 telnet encoder stream
-so the wheel response is measured directly. The final summary reports commanded
-speed, odom response, encoder actuals, and battery power draw. By default it publishes
-to `/cmd_vel_raw`, which matches the active teleop path in the current launch stack.
-Pass `--command-topic /diff_cont/cmd_vel_unstamped` if you temporarily bypass the
-smoother.
+The bench firmware is in `src/esp32_microros/test/test_pid_bench`. It logs the
+encoder actuals, filtered speed, PWM, and battery directly on the ESP32. Use a
+dev machine to capture and graph that output. Do not pull the Pi into this stage.
+The bench auto-starts after boot, runs the PID segment, then continues into the
+power sweep, so no manual keypress is needed.
 
 ---
 
@@ -78,7 +79,7 @@ Run the automated test script to capture a baseline before changing anything:
 
 ```bash
 # On dev machine
-python3 ~/dev_ws/src/articubot_one/scripts/pid_tune_test.py
+ros2 run articubot_one pid_sequence_test.py --profile one_turn --turn-adaptive --turn-revolutions 1.0 --turn-extend-revolutions 1.0 --turn-max-revolutions 3.0 --turn-velocity-floor 0.50 --turn-wheel both --turn-linear 0.25 --turn-max-time 12.0 --log-rate 10 --encoder-host esp32-mybot.local --output /home/ryan/dev_ws/one_turn_log.csv
 ```
 
 Or manually:
@@ -257,7 +258,10 @@ ssh ryan@mybot "sudo systemctl restart robot-launch.service"
 # 4. Open telnet monitor
 nc esp32-mybot.local 23
 
-# 5. Run test (from dev machine)
+# 5. Make sure the command path has seen a zero twist since boot
+#    before the first move command.
+
+# 6. Run test (from dev machine)
 source /opt/ros/humble/setup.bash
 ros2 topic pub /cmd_vel geometry_msgs/msg/Twist \
   '{linear: {x: 0.15}, angular: {z: 0.0}}' --rate 10
@@ -277,13 +281,13 @@ Good tracking: `filt` within ~10–15% of `tgt`, stable, not oscillating.
 
 ### Current one-turn result
 
-Latest count-based test:
+Latest count-based test after the sustain-floor fix:
 
 - Target: 1010 counts
-- Observed stop: about 1098 / 1095 counts
-- Result: full rotation confirmed
-- Behavior: the wheel advanced in bursts, not a smooth continuous turn
+- Observed stop: about 1432 / 1447 counts
+- Result: full rotation confirmed again
+- Behavior: the wheel now keeps moving through the turn instead of stalling
 
-That stop-and-go motion is the next problem to fix. Do not move to the
-three-rotation test until the one-turn motion is smooth enough to hold a
-continuous spin without visible pulsing.
+Use this as the new baseline. The next pass should graph velocity and let the
+adaptive rotation test extend naturally toward 3 revolutions when motion stays
+healthy.

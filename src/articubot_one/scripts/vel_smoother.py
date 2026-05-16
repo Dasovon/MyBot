@@ -19,6 +19,7 @@ freq          : float  publish rate (Hz), default 50.0
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 from geometry_msgs.msg import Twist
 
 
@@ -38,10 +39,15 @@ class VelSmoother(Node):
         self._smooth_lin = 0.0
         self._smooth_ang = 0.0
 
+        _best_effort_qos = QoSProfile(
+            reliability=QoSReliabilityPolicy.BEST_EFFORT,
+            history=QoSHistoryPolicy.KEEP_LAST,
+            depth=1,
+        )
         self._sub = self.create_subscription(
             Twist, 'cmd_vel_raw', self._cmd_cb, 10)
         self._pub = self.create_publisher(
-            Twist, '/diff_cont/cmd_vel_unstamped', 10)
+            Twist, '/diff_cont/cmd_vel_unstamped', _best_effort_qos)
 
         self._dt = 1.0 / freq
         self._timer = self.create_timer(self._dt, self._tick)

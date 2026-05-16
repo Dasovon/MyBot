@@ -184,7 +184,7 @@ Wire left and right encoders, then drive wheels by hand. Confirms:
 Requires the micro-ROS agent running on the Pi:
 
 ```bash
-ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyACM0
+ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:5C:23:1C-if00
 ```
 
 Confirms micro-ROS transport is alive by publishing a `/heartbeat` counter and subscribing to a test topic.
@@ -212,7 +212,7 @@ Run after all four test sketches pass.
 **On Pi — start the agent instead of the normal hardware nodes:**
 
 ```bash
-ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyACM0
+ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:5C:23:1C-if00
 ```
 
 Then launch the rest of the stack normally (EKF, Nav2, RViz2) — no changes needed.

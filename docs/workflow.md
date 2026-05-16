@@ -18,7 +18,8 @@ Claude Code runs on dev. It reaches the Pi via `ssh ryan@mybot "..."`.
 | RViz2 | Dev | `rviz2` |
 
 > BNO055 IMU and INA219 are handled entirely by the ESP32-S3 over micro-ROS — no Pi-side sensor nodes needed.
-> Current Pi launch path is direct `twist_mux -> /diff_cont/cmd_vel_unstamped`; the Pi does not run `nav2_velocity_smoother`.
+> Current Pi launch path is `twist_mux -> /cmd_vel_raw -> vel_smoother.py -> /diff_cont/cmd_vel_unstamped`.
+> Low-level PID tuning runs on the ESP32 bench firmware in `src/esp32_microros/test/test_pid_bench`; the dev machine captures the logs.
 
 ### Full launch sequence
 
@@ -124,12 +125,12 @@ Memory files live at:
 
 ## ESP32-S3 micro-ROS Stack (production)
 
-ESP32-S3 handles motors, encoders, BNO055 IMU, and INA219 power monitor. Pi runs `micro_ros_agent` as the bridge. EKF, Nav2, AMCL are unchanged and run on dev.
+ESP32-S3 handles motors, encoders, BNO055 IMU, and INA219 power monitor. Pi runs `micro_ros_agent` as the bridge for integration runs. EKF, Nav2, AMCL are unchanged and run on dev.
 
 **`mybot-launch` already starts the agent.** To run it manually on Pi:
 ```bash
 source ~/microros_ws/install/setup.bash
-ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyACM0
+ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:5C:23:1C-if00
 ```
 
 **OTA firmware flash (from dev):**
