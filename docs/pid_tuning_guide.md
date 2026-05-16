@@ -16,11 +16,12 @@
 | Enc log format | `[enc] tgt=L/R act=L/R filt=L/R` (rad/s, 1 Hz) |
 
 **Key difference from standard tuning**: the Pi launch stack includes the repo's
-`vel_smoother.py`, which limits step changes before the ESP32 sees them. The
-ESP32 still applies its own timeout, integral preseed, and motor PWM
-sustain/reversal handling. Kd is still not useful for startup in this robot
-because the EMA encoder filter adds lag and the motors have a hard deadband.
-Startup mechanism is **integral preseed** instead.
+`vel_smoother.py`, which limits step changes before the ESP32 sees them and now
+requires a stable zero hold at boot before it forwards motion. The ESP32 still
+applies its own timeout, integral preseed, and motor PWM sustain/reversal
+handling. Kd is still not useful for startup in this robot because the EMA
+encoder filter adds lag and the motors have a hard deadband. Startup mechanism
+is **integral preseed** instead.
 The ESP32 also requires a short stable zero hold after boot or reconnect before
 it will arm motion, so a single startup zero cannot immediately re-enable motion.
 For low-level motor tuning, use the ESP32 bench firmware in

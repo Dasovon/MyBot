@@ -15,6 +15,8 @@ Parameters
 linear_accel  : float  max linear acceleration  (m/s²), default 0.5
 angular_accel : float  max angular acceleration (rad/s²), default 1.0
 freq          : float  publish rate (Hz), default 50.0
+cmd_timeout   : float  seconds before stale input is cleared, default 1.0
+startup_zero_hold : float  seconds of stable zero required before arming, default 1.0
 """
 
 import time
@@ -32,17 +34,21 @@ class VelSmoother(Node):
         self.declare_parameter('angular_accel', 1.0)
         self.declare_parameter('freq', 50.0)
         self.declare_parameter('cmd_timeout', 1.0)
+        self.declare_parameter('startup_zero_hold', 1.0)
 
         self._lin_accel = self.get_parameter('linear_accel').value
         self._ang_accel = self.get_parameter('angular_accel').value
         freq = self.get_parameter('freq').value
         self._cmd_timeout = self.get_parameter('cmd_timeout').value
+        self._startup_zero_hold = self.get_parameter('startup_zero_hold').value
 
         self._target_lin = 0.0
         self._target_ang = 0.0
         self._smooth_lin = 0.0
         self._smooth_ang = 0.0
         self._last_cmd_t = None  # monotonic time of last received cmd
+        self._boot_armed = False
+        self._boot_zero_since = None
 
         _best_effort_qos = QoSProfile(
             reliability=QoSReliabilityPolicy.BEST_EFFORT,
@@ -64,12 +70,32 @@ class VelSmoother(Node):
 
     def _tick(self):
         dt = self._dt
+        now = time.monotonic()
 
         # Zero target if source has gone silent — prevents stale DDS history commands
         # from keeping _target nonzero and blocking the ESP32 arming zero.
-        if self._last_cmd_t is not None and (time.monotonic() - self._last_cmd_t) > self._cmd_timeout:
+        if self._last_cmd_t is not None and (now - self._last_cmd_t) > self._cmd_timeout:
             self._target_lin = 0.0
             self._target_ang = 0.0
+
+        # Boot gate: do not forward any nonzero motion until the smoother has seen
+        # a stable zero hold after startup / restart. This blocks stale commands
+        # from crossing the bridge during Pi boot.
+        if not self._boot_armed:
+            if abs(self._target_lin) < 0.001 and abs(self._target_ang) < 0.001:
+                if self._boot_zero_since is None:
+                    self._boot_zero_since = now
+                elif (now - self._boot_zero_since) >= self._startup_zero_hold:
+                    self._boot_armed = True
+            else:
+                self._boot_zero_since = None
+            self._smooth_lin = 0.0
+            self._smooth_ang = 0.0
+            out = Twist()
+            out.linear.x = self._smooth_lin
+            out.angular.z = self._smooth_ang
+            self._pub.publish(out)
+            return
 
         # Snap to zero on stop — crisp stop, no coast
         if abs(self._target_lin) < 0.001 and abs(self._target_ang) < 0.001:

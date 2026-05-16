@@ -25,6 +25,7 @@ ROS 2 Humble differential drive robot. RPi 4 + ESP32-S3 (production stack — Ar
   - Motion arming requires a stable zero hold after boot/reconnect; a single zero packet does not re-enable motion
   - **Launch path**: `twist_mux → /cmd_vel_raw → vel_smoother.py (50Hz, 0.5 m/s², 1.0 rad/s²) → /diff_cont/cmd_vel_unstamped`
   - vel_smoother starts 2s after twist_mux (TimerAction) — prevents FastDDS SHM discovery failure (fix #34)
+  - vel_smoother now requires a stable zero hold at startup before it forwards nonzero motion, which blocks stale boot commands on the Pi side
   - robot-launch.service cleans `/dev/shm/fastrtps_*` before each start (fix #34)
   - **Teleop must use `repeat_rate:=10.0`**: `ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p repeat_rate:=10.0`
   - If agent shows stuck/AGENT OFFLINE after OTA reboot: `sudo systemctl restart robot-launch.service`
