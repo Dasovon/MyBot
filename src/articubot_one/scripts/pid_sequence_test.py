@@ -138,7 +138,7 @@ class DriveSequenceRunner(Node):
         self.steps = self._build_steps(args)
         self.repeats_left = max(1, args.repeats)
         self.sequence_index = 0
-        self.phase = "active"
+        self.phase = "warmup"
         self.phase_started = time.monotonic()
         self.current_step = self.steps[0]
         self.done = False
@@ -158,6 +158,7 @@ class DriveSequenceRunner(Node):
 
         self.command_period = 1.0 / args.command_rate
         self.log_period = 1.0 / args.log_rate
+        self.warmup_seconds = args.warmup
         self.next_command_at = time.monotonic()
         self.next_log_at = time.monotonic()
         self.cmd_timer = self.create_timer(0.02, self._tick)
@@ -201,7 +202,7 @@ class DriveSequenceRunner(Node):
         )
 
         self.get_logger().info(
-            f"logging to {self.log_path} | profile={args.profile or 'custom'} | repeats={self.repeats_left}"
+            f"logging to {self.log_path} | profile={args.profile or 'custom'} | repeats={self.repeats_left} | warmup={self.warmup_seconds}s"
         )
 
     def _build_steps(self, args):
@@ -241,11 +242,18 @@ class DriveSequenceRunner(Node):
         return 0.0, 0.0
 
     def _step_done(self):
+        if self.phase == "warmup":
+            return (time.monotonic() - self.phase_started) >= self.warmup_seconds
         return (time.monotonic() - self.phase_started) >= (
             self.current_step.duration if self.phase == "active" else self.current_step.stop_hold
         )
 
     def _advance(self):
+        if self.phase == "warmup":
+            self.phase = "active"
+            self.phase_started = time.monotonic()
+            return
+
         if self.phase == "active":
             self.phase = "stop"
             self.phase_started = time.monotonic()
@@ -355,6 +363,7 @@ class DriveSequenceRunner(Node):
         parser.add_argument("--duration", type=float, default=1.2, help="default active duration for a step")
         parser.add_argument("--stop-hold", type=float, default=0.5, help="seconds to hold zero after each active move")
         parser.add_argument("--repeats", type=int, default=1, help="repeat the chosen profile this many times")
+        parser.add_argument("--warmup", type=float, default=2.0, help="seconds to wait before starting the sequence")
         parser.add_argument(
             "--command-topic",
             default="/diff_cont/cmd_vel_unstamped",
