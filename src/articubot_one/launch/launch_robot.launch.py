@@ -3,7 +3,7 @@ import os
 from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription, TimerAction
+from launch.actions import IncludeLaunchDescription, TimerAction, ExecuteProcess
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 
 from launch_ros.actions import Node
@@ -62,8 +62,11 @@ def generate_launch_description():
     return LaunchDescription([
         rsp,
         twist_mux,
-        vel_smoother,
         micro_ros_agent,
+        # Delay vel_smoother 2s so twist_mux DDS publisher is fully established
+        # before vel_smoother creates its /cmd_vel_raw subscription. Without this
+        # delay, FastDDS SHM discovery can fail between co-launched processes.
+        TimerAction(period=2.0, actions=[vel_smoother]),
         TimerAction(period=8.0, actions=[lidar]),
         camera,
     ])

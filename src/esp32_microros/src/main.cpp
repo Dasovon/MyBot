@@ -44,15 +44,15 @@ static constexpr int   ENC_CPR       = 1010;
 static constexpr float COUNTS_TO_RAD = (2.0f * M_PI) / ENC_CPR;
 
 // ── PID — gains in rad/s error units ─────────────────────────────────
-// Kp=30: proportional gain. Kp=100 caused limit-cycle oscillation on turns
-//        (unloaded motors overshoot hard with no Kd). Kp=30 gives ≈same
-//        steady-state response with less ringing.
-// Ki=150: overcomes motor deadband at steady state — without it, low-speed
-//         commands (turns) limit-cycle as PWM drops below friction threshold.
-// Anti-windup: integral clamped to ±1.0 → max ±150 PWM contribution from Ki.
-static constexpr float KP     =  30.0f;
-static constexpr float KI     = 150.0f;
-static constexpr float KI_MAX =   1.0f;  // integral clamp (PWM contribution = KI * KI_MAX)
+// Kd=0: vel_smoother ramp inputs cause D to oscillate with EMA lag — removed.
+// Ki=5 + preseed: preseed sets integral so first tick delivers START_PWM_SEED PWM,
+//   overcoming motor deadband instantly without the overshoot that Kd caused.
+// Ki then handles steady-state tracking error.
+static constexpr float KP            =  20.0f;
+static constexpr float KD            =   0.0f;
+static constexpr float KI            =   5.0f;
+static constexpr float KI_MAX        =  10.0f;
+static constexpr float START_PWM_SEED = 55.0f;  // PWM at first tick from standstill
 
 
 // ── Velocity lowpass filter ───────────────────────────────────────────
@@ -61,10 +61,6 @@ static constexpr float KI_MAX =   1.0f;  // integral clamp (PWM contribution = K
 static constexpr float VEL_ALPHA = 0.2f;
 static float vel_l_filt = 0.0f, vel_r_filt = 0.0f;
 
-// Velocity smoother on Pi (vel_smoother.py) now handles command ramping —
-// commands arrive pre-conditioned at 50 Hz. ESP32 applies preseed and slew
-// only for deadband and PWM-rate protection.
-static constexpr float START_PWM_SEED = 55.0f;  // gentle deadband preseed
 static constexpr float REVERSAL_COAST_VEL = 3.0f;  // rad/s: coast before reversing a rolling wheel (raised from 0.8 — EMI noise on left encoder was false-triggering)
 static float cmd_lin = 0.0f, cmd_ang = 0.0f;
 static constexpr uint32_t CMD_TIMEOUT_MS = 1000;
@@ -77,16 +73,16 @@ static int pid_compute(PID& p, float actual, float dt) {
     if (fabsf(p.target) < 0.01f) {
         p.integral = 0.0f;
         p.prev_err = 0.0f;
-        return 0;  // coast to stop — avoid hard braking jerk on key release
+        return 0;  // coast to stop
     }
     if ((p.target > 0.0f && actual < -REVERSAL_COAST_VEL) ||
         (p.target < 0.0f && actual >  REVERSAL_COAST_VEL)) {
         p.prev_err = p.target - actual;
-        return 0;  // let momentum bleed off before applying reverse drive
+        return 0;  // let momentum bleed off before applying reverse
     }
     float err = p.target - actual;
     p.integral = constrain(p.integral + err * dt, -KI_MAX, KI_MAX);
-    float out = KP * err + KI * p.integral;
+    float out = KP * err + KD * (err - p.prev_err) / dt + KI * p.integral;
     p.prev_err = err;
     out = constrain(out, -255.0f, 255.0f);
     return (int)out;
@@ -328,15 +324,19 @@ void loop() {
                 float tl = (cmd_lin - cmd_ang * WHEEL_SEP * 0.5f) / WHEEL_RADIUS;
                 float tr = (cmd_lin + cmd_ang * WHEEL_SEP * 0.5f) / WHEEL_RADIUS;
 
-                // Preseed integral on rest→move to overcome deadband on first ramp step
+                // Preseed integral on rest→move transition so first tick delivers
+                // START_PWM_SEED PWM — overcomes motor deadband without Kd overshoot.
                 auto preseed = [](PID& p, float nt) {
                     if (fabsf(p.target) < 0.01f && fabsf(nt) > 0.01f) {
-                        float s = (nt > 0) ? 1.0f : -1.0f;
-                        p.integral = constrain(s * (START_PWM_SEED - KP * fabsf(nt)) / KI, -KI_MAX, KI_MAX);
+                        float s = (nt > 0.0f) ? 1.0f : -1.0f;
+                        p.integral = constrain(
+                            s * (START_PWM_SEED - KP * fabsf(nt)) / KI,
+                            -KI_MAX, KI_MAX);
                     }
                 };
                 preseed(pid_l, tl);
                 preseed(pid_r, tr);
+
                 pid_l.target = tl;
                 pid_r.target = tr;
 
