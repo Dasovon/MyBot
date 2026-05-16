@@ -334,7 +334,7 @@ After=network.target
 Type=simple
 User=ryan
 Environment="PYTHONUNBUFFERED=1"
-ExecStartPre=/bin/bash -c "sudo fuser -k /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:5C:23:1C-if00 2>/dev/null; sleep 5"
+ExecStartPre=/bin/bash -c "rm -f /dev/shm/fastrtps_* && sudo fuser -k /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:5C:23:1C-if00 2>/dev/null; sleep 5"
 ExecStart=/bin/bash -c "source /opt/ros/humble/setup.bash && source /home/ryan/mybot_ws/install/setup.bash && source /home/ryan/microros_ws/install/setup.bash && ros2 launch articubot_one launch_robot.launch.py"
 Restart=on-failure
 RestartSec=5

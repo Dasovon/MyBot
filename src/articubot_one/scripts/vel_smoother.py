@@ -17,6 +17,8 @@ angular_accel : float  max angular acceleration (rad/s²), default 1.0
 freq          : float  publish rate (Hz), default 50.0
 """
 
+import time
+
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
@@ -29,15 +31,18 @@ class VelSmoother(Node):
         self.declare_parameter('linear_accel', 0.5)
         self.declare_parameter('angular_accel', 1.0)
         self.declare_parameter('freq', 50.0)
+        self.declare_parameter('cmd_timeout', 1.0)
 
         self._lin_accel = self.get_parameter('linear_accel').value
         self._ang_accel = self.get_parameter('angular_accel').value
         freq = self.get_parameter('freq').value
+        self._cmd_timeout = self.get_parameter('cmd_timeout').value
 
         self._target_lin = 0.0
         self._target_ang = 0.0
         self._smooth_lin = 0.0
         self._smooth_ang = 0.0
+        self._last_cmd_t = None  # monotonic time of last received cmd
 
         _best_effort_qos = QoSProfile(
             reliability=QoSReliabilityPolicy.BEST_EFFORT,
@@ -55,9 +60,16 @@ class VelSmoother(Node):
     def _cmd_cb(self, msg: Twist):
         self._target_lin = msg.linear.x
         self._target_ang = msg.angular.z
+        self._last_cmd_t = time.monotonic()
 
     def _tick(self):
         dt = self._dt
+
+        # Zero target if source has gone silent — prevents stale DDS history commands
+        # from keeping _target nonzero and blocking the ESP32 arming zero.
+        if self._last_cmd_t is not None and (time.monotonic() - self._last_cmd_t) > self._cmd_timeout:
+            self._target_lin = 0.0
+            self._target_ang = 0.0
 
         # Snap to zero on stop — crisp stop, no coast
         if abs(self._target_lin) < 0.001 and abs(self._target_ang) < 0.001:

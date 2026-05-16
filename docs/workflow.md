@@ -55,6 +55,53 @@ ssh ryan@192.168.86.33 "ps aux | grep micro_ros | grep -v grep | awk '{print \$2
 
 ---
 
+### Pi–ESP32 bridge troubleshooting
+
+**Symptom: robot doesn't respond to commands (topics look connected but no motion)**
+
+This happens in two scenarios:
+
+**A. Stuck micro_ros_agent** (after OTA flash or ESP32 30s-watchdog reset):
+Ping succeeds at serial level but the DDS bridge is confused — topics are advertised
+but no data flows. `ros2 topic hz /diff_cont/odom` will show 0 Hz.
+
+Fix:
+```bash
+ssh ryan@mybot "sudo systemctl restart robot-launch.service"
+# May need 2–3 attempts after an OTA flash
+```
+
+Verify bridge is healthy:
+```bash
+ros2 topic hz /diff_cont/odom   # expect ~30 Hz
+ros2 topic hz /imu/imu          # expect ~30 Hz
+```
+
+**B. vel_smoother ↔ twist_mux SHM discovery failure** (after service restart without SHM cleanup):
+`ros2 topic info /cmd_vel_raw` shows 1 publisher (twist_mux) and 1 subscriber (vel_smoother),
+but vel_smoother outputs only zeros regardless of teleop input.
+
+Fix: ensure `robot-launch.service` ExecStartPre includes `rm -f /dev/shm/fastrtps_*`
+(see `docs/pi-setup.md` §16 for the correct template). Then restart the service.
+
+**Symptom: ESP32 accepts zero command (arms) but ignores nonzero commands**
+
+The ESP32 boot-arming guard requires an explicit zero command before accepting motion.
+`vel_smoother.py` publishes zero at 50 Hz when idle — the ESP32 should arm within 20ms
+of vel_smoother starting. If it doesn't:
+
+1. Check `ros2 topic echo /diff_cont/cmd_vel_unstamped` — if it shows nothing, the bridge is stuck (scenario A above).
+2. Check `ros2 topic info /diff_cont/cmd_vel_unstamped` — if ESP32 subscription is listed, bridge is ok; if missing, micro_ros_agent hasn't connected.
+
+**Before rebooting the Pi, always stop dev-side ROS nodes:**
+```bash
+pkill -f "ros2 launch\|ros2 run\|rviz2\|nav2\|amcl"
+```
+Stale teleop publishers on the dev machine can deliver commands via DDS as soon as the
+Pi bridge comes back up, bypassing the ESP32 arming guard.
+
+---
+
 ## End-of-Session Routine
 
 Run this at the end of every session. Claude Code can execute it on your behalf.

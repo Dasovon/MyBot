@@ -46,8 +46,13 @@ ROS 2 Humble differential drive robot. RPi 4 + ESP32-S3 (production stack — Ar
   - No manual `mybot-launch` or reset button needed after power-on
 
 ### Next steps
-1. Object Tracking with OpenCV (final tutorial chapter)
-2. Jetson Nano setup (Docker + ROS 2 Humble + CUDA)
+1. **Verify Pi–ESP32 bridge is stable** (see docs/workflow.md troubleshooting section)
+   - Confirm `robot-launch.service` ExecStartPre includes `rm -f /dev/shm/fastrtps_*` (fix #34)
+   - After any OTA flash or ESP32 watchdog reset: `ssh ryan@mybot "sudo systemctl restart robot-launch.service"`
+   - Bridge healthy when `ros2 topic hz /diff_cont/odom` shows ~30 Hz
+2. ESP32 bench PID tuning (test_pid_bench — ESP32-only, no Pi needed)
+3. Object Tracking with OpenCV (final tutorial chapter)
+4. Jetson Nano setup (Docker + ROS 2 Humble + CUDA)
 
 ---
 
@@ -965,3 +970,36 @@ from dev machine to `/cmd_vel_raw` works (uses UDP network transport, bypasses S
 - `src/articubot_one/launch/launch_robot.launch.py` — vel_smoother wrapped in TimerAction(2s)
 - `/etc/systemd/system/robot-launch.service` (Pi only) — ExecStartPre adds SHM cleanup
 - `docs/pid_tuning_guide.md` — new PID tuning procedure document
+
+### 35) Pi–ESP32 bridge stabilization — vel_smoother timeout + docs (2026-05-16)
+
+**Problems identified:**
+
+1. `vel_smoother.py` had no timeout on `_target_lin`/`_target_ang`. If DDS delivered a stale
+   nonzero message from twist_mux history on startup, the smoother would ramp up indefinitely
+   and never publish the zero needed to arm the ESP32 boot-arming guard.
+
+2. `docs/pi-setup.md` robot-launch.service template was missing `rm -f /dev/shm/fastrtps_*`
+   in ExecStartPre. A fresh Pi setup from the guide would hit the vel_smoother SHM discovery
+   failure (fix #34) on every service restart.
+
+3. No documented recovery procedure for the stuck micro_ros_agent state that occurs after
+   OTA flash or ESP32 30s-watchdog reset.
+
+**Fixes:**
+
+1. `vel_smoother.py` — add `cmd_timeout` parameter (default 1.0 s). If no message arrives
+   from `cmd_vel_raw` within the timeout, `_target_lin` and `_target_ang` are zeroed. This
+   ensures the smoother always publishes zero when the command source is silent, which arms
+   the ESP32.
+
+2. `docs/pi-setup.md` — ExecStartPre now includes `rm -f /dev/shm/fastrtps_*` before the
+   serial device kill and sleep.
+
+3. `docs/workflow.md` — added "Pi–ESP32 bridge troubleshooting" section covering stuck
+   micro_ros_agent, SHM discovery failure, and stale dev-machine publishers.
+
+**Files changed:**
+- `src/articubot_one/scripts/vel_smoother.py` — `cmd_timeout` param + target zeroing on silence
+- `docs/pi-setup.md` — SHM cleanup added to robot-launch.service template
+- `docs/workflow.md` — bridge troubleshooting section added
