@@ -39,6 +39,7 @@ class BatteryFeed:
         self.voltage = None
         self.current = None
         self.last_update_t = 0.0
+        self.link_start_t = 0.0
         self.connected = False
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -51,7 +52,13 @@ class BatteryFeed:
 
     def snapshot(self):
         with self._lock:
-            return self.voltage, self.current, self.last_update_t, self.connected
+            return (
+                self.voltage,
+                self.current,
+                self.last_update_t,
+                self.link_start_t,
+                self.connected,
+            )
 
     def _set(self, voltage=None, current=None, connected=None):
         with self._lock:
@@ -61,8 +68,14 @@ class BatteryFeed:
                 self.current = current
             if connected is not None:
                 self.connected = connected
+                if connected:
+                    self.link_start_t = time.monotonic()
+                else:
+                    self.link_start_t = 0.0
             if voltage is not None or current is not None:
                 self.last_update_t = time.monotonic()
+                if self.link_start_t == 0.0:
+                    self.link_start_t = self.last_update_t
 
     def _run(self):
         while not self._stop.is_set():
@@ -228,8 +241,9 @@ class OledDisplay:
                 time.sleep(2.0)
                 continue
 
-            battery_v, battery_a, battery_t, connected = self._feed.snapshot()
+            battery_v, battery_a, battery_t, link_t, connected = self._feed.snapshot()
             battery_age_s = (time.monotonic() - battery_t) if battery_t else 999.0
+            link_age_s = (time.monotonic() - link_t) if link_t else 0.0
 
             try:
                 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -243,7 +257,7 @@ class OledDisplay:
                    if battery_v is not None else '--')
             esp32_status = self._status_line(battery_v, battery_age_s, connected)
             ros_status = self._ros_status()
-            age_text = self._format_age(battery_age_s)
+            age_text = self._format_age(link_age_s)
 
             img = Image.new('1', (WIDTH, HEIGHT), 1)
             draw = ImageDraw.Draw(img)

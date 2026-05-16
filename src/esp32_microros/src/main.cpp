@@ -412,7 +412,6 @@ void loop() {
                     // Preseed integral on rest→move transition so first tick delivers
                     // START_PWM_SEED PWM — overcomes motor deadband without Kd overshoot.
                     auto preseed = [&](PID& p, float nt) {
-                        if (!motion_armed) return;
                         if (fabsf(p.target) < 0.01f && fabsf(nt) > 0.01f) {
                             float s = (nt > 0.0f) ? 1.0f : -1.0f;
                             p.integral = constrain(
@@ -475,17 +474,6 @@ void loop() {
                 imu_msg.linear_acceleration.y     = la.y();
                 imu_msg.linear_acceleration.z     = la.z();
                 rcl_publish(&pub_imu, &imu_msg, NULL);
-            }
-
-            // Battery @ 1 Hz
-            if (now - t_battery >= 1000) {
-                t_battery = now;
-                float v   = ina.getBusVoltage_V();
-                float i_A = ina.getCurrent_mA() * 0.001f;
-                bat_msg.voltage = v;
-                bat_msg.current = i_A;
-                rcl_publish(&pub_bat, &bat_msg, NULL);
-                log("[bat] %.2fV  %.3fA\n", v, i_A);
             }
 
             // Ping keep-alive every 2 s — stop motors immediately on agent loss

@@ -20,6 +20,7 @@ Claude Code runs on dev. It reaches the Pi via `ssh ryan@mybot "..."`.
 > BNO055 IMU and INA219 are handled entirely by the ESP32-S3 over micro-ROS — no Pi-side sensor nodes needed.
 > Current Pi launch path is `twist_mux -> /cmd_vel_raw -> vel_smoother.py -> /diff_cont/cmd_vel_unstamped`.
 > Camera and lidar are opt-in launch args so unplugged hardware does not take down the robot stack.
+> Motion tests require `enable_motion:=true`; otherwise the launch file keeps the drive path disabled and the bridge runner will time out at zero.
 > Low-level PID tuning runs on the ESP32 bench firmware in `src/esp32_microros/test/test_pid_bench`; the dev machine captures the logs.
 
 ### Full launch sequence

@@ -88,6 +88,9 @@ stop recovery, and boot-zero behavior rather than gain tuning.
 The bridge profile starts with forward motion, then stop, reverse, stop, turn,
 stop so the preflight can prove the ESP32 logged a received command before the
 rest of the sequence runs.
+When you run that bridge profile against the live robot stack, launch with
+`enable_motion:=true` so `twist_mux` and `vel_smoother.py` are actually active.
+Otherwise the test will sit at zero and look like a bridge failure.
 
 ---
 

@@ -128,7 +128,7 @@ Bench tuning lives in `src/esp32_microros/test/test_pid_bench` and runs without 
 OLED layout:
 1. `IP <Pi IP>`
 2. `BAT <voltage>V <current>A`
-3. `AGE hh:mm:ss`
+3. `AGE hh:mm:ss` link uptime since the current ESP32 telemetry session started
 4. `ESP32 ONLINE` / `ESP32 OFFLINE`
 5. `ROS UP` / `ROS DOWN`
 

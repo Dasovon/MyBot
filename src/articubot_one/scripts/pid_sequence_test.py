@@ -215,6 +215,10 @@ class DriveSequenceRunner(Node):
         self._enc_stop = threading.Event()
 
         self.pub = self.create_publisher(Twist, args.command_topic, 10)
+        if args.command_topic == "/cmd_vel_joy":
+            self.get_logger().info(
+                "This runner expects motion to be enabled at launch (enable_motion:=true) so twist_mux is active."
+            )
         self.create_subscription(BatteryState, "/battery_state", self._on_battery, 10)
         self.create_subscription(Imu, "/imu/imu", self._on_imu, 10)
         self.create_subscription(Odometry, "/diff_cont/odom", self._on_raw_odom, 10)
@@ -685,7 +689,7 @@ class DriveSequenceRunner(Node):
         )
         parser.add_argument(
             "--encoder-host",
-            default="192.168.86.43",
+            default="esp32-mybot.local",
             help="host serving the ESP32 telnet encoder stream",
         )
         parser.add_argument(

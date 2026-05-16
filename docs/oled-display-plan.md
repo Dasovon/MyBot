@@ -11,4 +11,4 @@ Use these canonical docs instead:
 Current OLED behavior:
 - starts at boot as `oled-display.service`
 - reads battery telemetry directly from the ESP32 Telnet stream
-- displays `IP`, `BAT`, `AGE`, `ESP32 ONLINE/OFFLINE`, and `ROS UP/DOWN`
+- displays `IP`, `BAT`, `AGE` link uptime, `ESP32 ONLINE/OFFLINE`, and `ROS UP/DOWN`
