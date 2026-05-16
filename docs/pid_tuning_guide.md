@@ -189,20 +189,35 @@ Ki offset on the lagging wheel — but fix hardware first.
 
 ---
 
-## Current Validated Values (2026-05-15)
+## Recommended Starting Values
+
+These are the first values to flash and test. They are not final — adjust based
+on what you observe on the floor.
 
 ```cpp
-KP            = 20.0f
-KD            =  0.0f
-KI            =  5.0f
-KI_MAX        = 10.0f
+KP             = 20.0f
+KD             =  0.0f
+KI             =  5.0f
+KI_MAX         = 10.0f   // ← adjust this first if stop feel is wrong
 START_PWM_SEED = 55.0f
-VEL_ALPHA     =  0.2f   // EMA filter — keep, suppresses encoder EMI noise
-REVERSAL_COAST_VEL = 3.0f  // rad/s — raised from 0.8 to avoid EMI false triggers
-CMD_TIMEOUT_MS     = 1000  // ms — safety stop
+VEL_ALPHA      =  0.2f   // EMA filter — keep, suppresses encoder EMI noise
+REVERSAL_COAST_VEL = 3.0f  // rad/s
+CMD_TIMEOUT_MS     = 1000  // ms
 ```
 
 Pi-side vel_smoother: `linear_accel=0.5 m/s²`, `angular_accel=1.0 rad/s²`, `freq=50 Hz`
+
+### Stop-feel tuning
+
+**If the robot feels slow to stop or creeps after releasing a key**: lower `KI_MAX`
+first — high KI_MAX means the integral is wound up and keeps pushing even after
+the command goes to zero. Halve KI_MAX (e.g., 10 → 5) before touching Kp.
+
+**If the robot still creeps after lowering KI_MAX**: lower Ki slightly (5 → 3).
+
+**Do not lower Kp to fix stop behavior** — Kp only affects how hard the motor
+is driven relative to current error. KI_MAX is what limits the integral windup
+that causes creep.
 
 ---
 

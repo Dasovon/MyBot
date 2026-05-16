@@ -9,18 +9,23 @@ ROS 2 Humble differential drive robot. RPi 4 + ESP32-S3 (production stack — Ar
 - Nav2 autonomous navigation ✅ working (saved map at `~/mybot_ws/maps/my_map`)
 - RealSense D435 ✅ color + depth 640×480@15fps (RSUSB backend, fix #18)
 - **Pi fully restored after reflash** ✅: ROS Humble, mybot_ws, microros_ws, librealsense RSUSB, udev rules, SLAM map — all restored. Pi IP: 192.168.86.33
-- **ESP32-S3 driving with Pi velocity smoother** (fix #33):
+- **ESP32-S3 driving with Pi velocity smoother** (fix #33 + #34):
   - Publishes: `/diff_cont/odom` (30Hz), `/imu/imu` (30Hz), `/battery_state` (1Hz)
   - Subscribes: `/diff_cont/cmd_vel_unstamped`
   - Robot stack auto-starts with `robot-launch.service`; `mybot-launch` remains the manual restart path
-  - PID: Kp=30, Ki=150, KI_MAX=1.0, Kd=0
+  - **PID (fix #34)**: Kp=20, Ki=5, Kd=0, KI_MAX=10, START_PWM_SEED=55
+    - Kd removed: caused ~90% overshoot with EMA lag on ramp inputs
+    - Preseed: on 0→nonzero transition, integral preset so first tick = 55 PWM (above deadband)
+    - If robot creeps after stop → lower KI_MAX first (try 5), then Ki
   - EMA filter: VEL_ALPHA=0.2 (suppresses left encoder EMI noise)
-  - Command shaping: START_PWM_SEED=55, PWM_SLEW_PER_TICK=8 (ESP32-level only; command ramping now done on Pi)
-  - REVERSAL_COAST_VEL=3.0 rad/s (raised from 0.8 — EMI noise on left encoder was false-triggering coast)
+  - REVERSAL_COAST_VEL=3.0 rad/s
   - CMD_TIMEOUT_MS=1000ms (safety stop if publisher dies while agent alive)
-  - **Launch path (fix #33)**: `twist_mux → /cmd_vel_raw → vel_smoother.py (50Hz, 0.5 m/s², 1.0 rad/s²) → /diff_cont/cmd_vel_unstamped`
+  - **Launch path**: `twist_mux → /cmd_vel_raw → vel_smoother.py (50Hz, 0.5 m/s², 1.0 rad/s²) → /diff_cont/cmd_vel_unstamped`
+  - vel_smoother starts 2s after twist_mux (TimerAction) — prevents FastDDS SHM discovery failure (fix #34)
+  - robot-launch.service cleans `/dev/shm/fastrtps_*` before each start (fix #34)
   - **Teleop must use `repeat_rate:=10.0`**: `ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p repeat_rate:=10.0`
   - If agent shows stuck/AGENT OFFLINE after OTA reboot: `sudo systemctl restart robot-launch.service`
+  - See `docs/pid_tuning_guide.md` for full tuning procedure and starting values
 - **Waveshare 2.42" OLED display** ✅ FULLY WORKING (2026-05-15):
   - `oled-display.service` ENABLED, running as `ryan`, survives cold power cycle
   - Shows: IP, battery V/A, velocity, position, nav status — all data from ESP32
@@ -911,3 +916,44 @@ filter to be removed or relaxed, which reduces feedback lag and lets the PID res
 - `src/articubot_one/launch/launch_robot.launch.py` — twist_mux remaps to /cmd_vel_raw; vel_smoother added
 - `src/articubot_one/CMakeLists.txt` — install vel_smoother.py
 - `src/esp32_microros/src/main.cpp` — remove LIN_ACCEL/ANG_ACCEL command ramp; ramp_lin/ramp_ang vars removed
+
+### 34) PID rework + vel_smoother SHM fix (2026-05-15)
+
+**Symptom:** Kd=12 caused ~90% wheel speed overshoot (target 2.94 rad/s, actual reaching 5.6 rad/s)
+when combined with the EMA velocity filter. vel_smoother → twist_mux pipeline broke on every
+`systemctl restart robot-launch.service` (worked after power cycle only).
+
+**Root cause — Kd overshoot:** Kd=12 with VEL_ALPHA=0.2 EMA lag: on first ramp step from standstill
+(target 0.49 rad/s), D = 12 × 0.49 / 0.033 = 178 PWM → motor blasts to 255. EMA filter delays
+feedback by ~5× — PID thinks motor is still slow, keeps driving. Result: 90% overshoot, then
+oscillation as D overcorrects.
+
+**Root cause — SHM discovery failure:** FastDDS uses Shared Memory (SHM) transport between
+same-machine processes. When `robot-launch.service` restarts (not full power cycle), stale SHM
+segments from the previous run persist in `/dev/shm/`. When vel_smoother and twist_mux are
+launched simultaneously, SHM endpoint discovery fails silently — vel_smoother's subscription never
+matches twist_mux's publisher. Symptoms: `ros2 topic info /cmd_vel_raw` shows 1 subscriber
+(vel_smoother) and 1 publisher (twist_mux), but vel_smoother outputs all zeros; publishing directly
+from dev machine to `/cmd_vel_raw` works (uses UDP network transport, bypasses SHM issue).
+
+**Fixes:**
+
+1. **Kd=0, Ki=5, KI_MAX=10 with preseed** — removes overshoot:
+   - Preseed sets integral on 0→nonzero target transition so first tick delivers exactly
+     `START_PWM_SEED=55` PWM regardless of ramp step size. Overcomes motor deadband (~45 PWM)
+     on first tick without the D-term spike.
+   - Ki=5 handles steady-state tracking error after startup.
+   - Stop behavior: if robot creeps after stop, lower KI_MAX (try 5) to reduce integral windup.
+
+2. **TimerAction 2s delay for vel_smoother** in launch file — gives twist_mux time to
+   fully initialize SHM endpoints before vel_smoother creates its subscription. Eliminates
+   race condition on simultaneous launch.
+
+3. **ExecStartPre SHM cleanup** in `robot-launch.service` — `rm -f /dev/shm/fastrtps_*`
+   before each start clears stale segments from previous run, ensuring fresh SHM discovery.
+
+**Files changed:**
+- `src/esp32_microros/src/main.cpp` — Kd 12→0, Ki 0→5, KI_MAX 1→10, preseed restored
+- `src/articubot_one/launch/launch_robot.launch.py` — vel_smoother wrapped in TimerAction(2s)
+- `/etc/systemd/system/robot-launch.service` (Pi only) — ExecStartPre adds SHM cleanup
+- `docs/pid_tuning_guide.md` — new PID tuning procedure document
