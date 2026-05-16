@@ -44,7 +44,7 @@ static constexpr int   ENC_CPR       = 1010;
 static constexpr float COUNTS_TO_RAD = (2.0f * M_PI) / ENC_CPR;
 
 // ── PID — gains in rad/s error units ─────────────────────────────────
-// Kd=0: vel_smoother ramp inputs cause D to oscillate with EMA lag — removed.
+// Kd=0: derivative still reacts badly to EMA lag on step-like inputs — removed.
 // Ki=5 + preseed: preseed sets integral so first tick delivers START_PWM_SEED PWM,
 //   overcoming motor deadband instantly without the overshoot that Kd caused.
 // Ki then handles steady-state tracking error.
@@ -320,7 +320,8 @@ void loop() {
                     cmd_ang = 0.0f;
                 }
 
-                // Commands arrive pre-smoothed from vel_smoother.py on Pi (0.5 m/s², 1.0 rad/s²).
+                // Commands arrive directly from twist_mux on the Pi; the ESP32 applies its own
+                // start preseed, timeout, and reversal-coast handling here.
                 float tl = (cmd_lin - cmd_ang * WHEEL_SEP * 0.5f) / WHEEL_RADIUS;
                 float tr = (cmd_lin + cmd_ang * WHEEL_SEP * 0.5f) / WHEEL_RADIUS;
 

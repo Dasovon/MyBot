@@ -10,13 +10,14 @@
 | Wheel separation | 0.179 m |
 | Encoder CPR | 1010 counts/rev |
 | Control loop | 30 Hz (33 ms/tick) |
-| Pi-side smoother | vel_smoother.py: 0.5 m/s², 1.0 rad/s², 50 Hz |
+| Pi-side smoother | none in current deployment; `twist_mux` feeds the ESP32 directly |
 | Telnet monitor | `nc esp32-mybot.local 23` |
 | Enc log format | `[enc] tgt=L/R act=L/R filt=L/R` (rad/s, 1 Hz) |
 
-**Key difference from standard tuning**: vel_smoother ramps commands. The ESP32 PID
-never sees a raw step — targets arrive as slow ramps (~0.49 rad/s per 33 ms tick).
-This means Kd is NOT useful for startup (it causes overshoot with the EMA lag).
+**Key difference from standard tuning**: the ESP32 sees direct `cmd_vel` targets
+from `twist_mux`, then applies its own timeout, integral preseed, and motor PWM
+slew/reversal handling. Kd is still not useful for startup in this robot because
+the EMA encoder filter adds lag and the motors have a hard deadband.
 Startup mechanism is **integral preseed** instead.
 
 ---
@@ -43,6 +44,13 @@ ros2 topic pub /cmd_vel geometry_msgs/msg/Twist \
 ```bash
 ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist '{}'
 ```
+
+For repeatable comparisons, use the test runner:
+```bash
+ros2 run articubot_one pid_sequence_test --profile rebound --output /home/ryan/dev_ws/pid_sequence_log.csv
+```
+It publishes a fixed sequence, forces a zero-command stop after every move, and logs
+the robot response to CSV for graphing.
 
 ---
 
@@ -102,11 +110,10 @@ Restart agent: `ssh ryan@mybot "sudo systemctl restart robot-launch.service"`
 | `filt` bounces ±around `tgt` at similar or higher amplitude | Kp too high — oscillating | Decrease Kp |
 | `filt` rises quickly, settles near `tgt` | Good Kp |  |
 
-**Deadband math**: Kp × error must exceed ~45 PWM. First ramp step delivers
-target=0.49 rad/s, so Kp × 0.49 ≥ 45 → **Kp ≥ 92 to start from rest with P only**.
-
+**Deadband math**: Kp × error must exceed ~45 PWM. With a direct command path,
+the first PID update from rest can still be too small to overcome motor deadband.
 In practice with preseed: Kp=20 works because preseed pre-fills integral for
-startup. Without preseed or Ki, Kp needs to be ~100 to self-start.
+startup. Without preseed or Ki, Kp needs to be much higher to self-start.
 
 **Good starting range**: Kp = 20–40
 
@@ -126,7 +133,7 @@ static constexpr float KI_MAX = 10.0f;  // Ki × KI_MAX = max integral contribut
 - Startup deadband (integral winds up until it overcomes friction)
 
 **Preseed**: when target transitions from 0 to non-zero, integral is preset so
-the first tick delivers exactly `START_PWM_SEED` PWM. This ensures the motor
+the first PID update lands near `START_PWM_SEED` PWM. This ensures the motor
 starts immediately without waiting for integral to wind up.
 
 ```cpp
@@ -143,6 +150,9 @@ static constexpr float START_PWM_SEED = 55.0f;  // first-tick PWM (above ~45 dea
 | Motor barely responds to stop command | KI_MAX too high (windup) | Decrease KI_MAX |
 
 **Good starting range**: Ki = 3–10, KI_MAX = 5–15
+
+If the robot creeps after stopping or feels sloppy at zero-command transitions,
+drop `KI_MAX` to `5.0f` first. That is the first knob I would turn before Kp.
 
 ---
 
@@ -205,7 +215,8 @@ REVERSAL_COAST_VEL = 3.0f  // rad/s
 CMD_TIMEOUT_MS     = 1000  // ms
 ```
 
-Pi-side vel_smoother: `linear_accel=0.5 m/s²`, `angular_accel=1.0 rad/s²`, `freq=50 Hz`
+Pi-side smoother: none in current deployment. If you add one later, keep its limits
+consistent with the ESP32 firmware and retune from scratch.
 
 ### Stop-feel tuning
 

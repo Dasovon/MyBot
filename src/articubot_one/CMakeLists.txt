@@ -38,7 +38,7 @@ install(
 )
 
 install(
-  PROGRAMS scripts/ina219_node.py scripts/oled_display_node.py scripts/vel_smoother.py
+  PROGRAMS scripts/ina219_node.py scripts/oled_display_node.py scripts/vel_smoother.py scripts/pid_sequence_test.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

@@ -86,10 +86,11 @@ Dev machine (Ubuntu 22.04)
 
 Raspberry Pi 4
   ├── robot_state_publisher
-  ├── twist_mux
-  ├── rplidar_composition    /scan
-  ├── realsense2_camera      /camera/camera/{color,depth}/...
-  └── micro_ros_agent        micro-ROS bridge for ESP32-S3
+  ├── twist_mux              → /diff_cont/cmd_vel_unstamped
+  ├── micro_ros_agent       ↔ ESP32-S3 micro-ROS bridge
+  ├── rplidar_composition    → /scan
+  ├── realsense2_camera      → /camera/camera/{color,depth}/...
+  └── oled_display_node      → Waveshare 2.42" OLED (systemd)
 
         ↕ USB serial @ 57600
 
