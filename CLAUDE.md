@@ -9,14 +9,18 @@ ROS 2 Humble differential drive robot. RPi 4 + ESP32-S3 (production stack — Ar
 - Nav2 autonomous navigation ✅ working (saved map at `~/mybot_ws/maps/my_map`)
 - RealSense D435 ✅ color + depth 640×480@15fps (RSUSB backend, fix #18)
 - **Pi fully restored after reflash** ✅: ROS Humble, mybot_ws, microros_ws, librealsense RSUSB, udev rules, SLAM map — all restored. Pi IP: 192.168.86.33
-- **ESP32-S3 full firmware validated and driving smoothly** (fix #31):
+- **ESP32-S3 full firmware validated and driving smoothly** (fixes #31, #32):
   - Publishes: `/diff_cont/odom` (30Hz), `/imu/imu` (30Hz), `/battery_state` (1Hz)
   - Subscribes: `/diff_cont/cmd_vel_unstamped`
   - Robot stack auto-starts with `robot-launch.service`; `mybot-launch` remains the manual restart path
   - PID: Kp=30, Ki=150, KI_MAX=1.0, Kd=0
   - EMA filter: VEL_ALPHA=0.2 (suppresses left encoder EMI noise)
-  - Command shaping: LIN_ACCEL=0.35 m/s², ANG_ACCEL=1.10 rad/s², START_PWM_SEED=55, PWM_SLEW_PER_TICK=8, no active braking
+  - Command shaping: LIN_ACCEL=0.35 m/s², ANG_ACCEL=1.10 rad/s², START_PWM_SEED=55, PWM_SLEW_PER_TICK=8
+  - REVERSAL_COAST_VEL=3.0 rad/s (raised from 0.8 — EMI noise on left encoder was false-triggering coast)
+  - CMD_TIMEOUT_MS=1000ms (safety stop if publisher dies while agent alive)
   - Launch path on Pi is direct `twist_mux -> /diff_cont/cmd_vel_unstamped`; no `nav2_velocity_smoother` package on the Pi
+  - **Teleop must use `repeat_rate:=10.0`**: `ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p repeat_rate:=10.0`
+  - If agent shows stuck/AGENT OFFLINE after OTA reboot: `sudo systemctl restart robot-launch.service`
 - **Waveshare 2.42" OLED display** ✅ FULLY WORKING (2026-05-15):
   - `oled-display.service` ENABLED, running as `ryan`, survives cold power cycle
   - Shows: IP, battery V/A, velocity, position, nav status — all data from ESP32
@@ -807,19 +811,64 @@ of continued motion after the stop key is pressed.
    after the PID output. Prevents abrupt mid-drive PWM jumps from noise spikes or fast target
    changes. Snaps to zero immediately when PID returns 0 (coast-to-stop still crisp).
 
-5. **Reversal coast + no-active-braking** in `pid_compute`: if a wheel is rolling >0.8 rad/s
-   in the opposite direction of the new target, coast instead of fighting it (prevents reverse
-   kick). If PID output would oppose the target wheel direction (overshoot), return 0 instead
-   of actively braking (prevents overcorrection bounce).
+5. **Reversal coast** in `pid_compute`: if a wheel is rolling >3.0 rad/s in the opposite direction
+   of the new target, coast instead of fighting it (prevents reverse kick on direction change).
+   Threshold raised to 3.0 in fix #32 — see below.
 
-**Final tuned values (2026-05-15):**
+**Final tuned values (2026-05-15, updated by fix #32):**
 - VEL_ALPHA = 0.2 (do not increase — higher alpha lets more noise through)
 - LIN_ACCEL = 0.35 m/s², ANG_ACCEL = 1.10 rad/s² (felt right after iterative tuning)
-- START_PWM_SEED = 55 PWM, PWM_SLEW_PER_TICK = 8, REVERSAL_COAST_VEL = 0.8 rad/s
+- START_PWM_SEED = 55 PWM, PWM_SLEW_PER_TICK = 8, REVERSAL_COAST_VEL = 3.0 rad/s
+- CMD_TIMEOUT_MS = 1000 ms
 
 **Permanent hardware fix (not yet done):** Solder 100 nF ceramic caps from GPIO40 to GND and
 GPIO41 to GND at the ESP32 headers. This removes the EMI noise at source and eliminates the
 need for the EMA filter entirely.
 
 **Files changed:**
-- `src/esp32_microros/src/main.cpp` — EMA filter, command ramp, snap-to-zero stop, integral preseed, PWM slew, reversal coast, no-active-braking
+- `src/esp32_microros/src/main.cpp` — EMA filter, command ramp, snap-to-zero stop, integral preseed, PWM slew, reversal coast
+
+### 32) Teleop stall — command timeout + key repeat + reversal coast EMI false triggers (2026-05-15)
+
+**Symptom:** Robot moves a short distance on a key tap; holding a key causes repeated stall-start
+cycles instead of sustained motion. Changing CMD_TIMEOUT_MS from 500ms to 1000ms had no effect.
+
+**Root cause 1 — teleop key repeat disabled in raw mode:** `teleop_twist_keyboard` puts the
+terminal in raw (non-canonical) mode to read single keypresses. In raw mode most terminal
+emulators suppress OS key repeat, so holding a key delivers only one publish event — identical
+to a tap. The command timeout then fires 500–1000 ms later, stopping the robot.
+
+**Root cause 2 — REVERSAL_COAST_VEL = 0.8 rad/s too low:** The left encoder (GPIO40/41) picks
+up TB6612 1 kHz PWM switching noise. A noise burst of ~−4 rad/s raw yields a filtered value of
+0.2 × (−4) = −0.8 rad/s — exactly the threshold. This false-triggered the reversal coast while
+driving forward, returning 0 from `pid_compute` and resetting `slew_pwm`'s `last` to 0. The
+motor had to rebuild PWM from scratch every noise burst (stall-restart cycle even mid-drive).
+
+**Root cause 3 — no-active-braking also resetting slew:** The `pid_compute` no-active-braking
+check (`if target > 0 && out < 0 → return 0`) fired on noise-induced velocity overshoots,
+also resetting the slew limiter. Removed — the slew limiter already caps abrupt PWM changes,
+making the check redundant.
+
+**Diagnosis method:** Telnet monitor during driving showed tgt cycling between non-zero and 0.00
+on consecutive 1Hz log ticks, with tgt ramp value resetting to a low number on each press
+(confirming fresh ramp start = timeout fired between presses). After applying repeat_rate,
+tgt stayed non-zero across consecutive ticks.
+
+**Fix:**
+1. Run `teleop_twist_keyboard` with `repeat_rate:=10.0` — node republishes at 10 Hz while a key
+   is held, keeping cmd alive well within the 1000 ms timeout:
+   ```bash
+   ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p repeat_rate:=10.0
+   ```
+2. Raise `REVERSAL_COAST_VEL` from 0.8 → 3.0 rad/s. Requires a −15 rad/s raw noise spike to
+   false-trigger (0.2 × 15 = 3.0), far above typical EMI levels.
+3. Remove no-active-braking check from `pid_compute` — slew limiter handles abrupt changes.
+4. Keep `CMD_TIMEOUT_MS = 1000` as a safety stop for lost publisher scenarios.
+
+**Also discovered:** micro_ros_agent enters a stuck state after ESP32 reboots from OTA or the
+30s WAITING watchdog fires. Topics are advertised but no data flows (ping succeeds at serial
+level but DDS bridge is confused). Fix: `sudo systemctl restart robot-launch.service`. Does not
+require a reboot.
+
+**Files changed:**
+- `src/esp32_microros/src/main.cpp` — REVERSAL_COAST_VEL 0.8→3.0, no-active-braking removed, CMD_TIMEOUT_MS 500→1000

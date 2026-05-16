@@ -63,17 +63,15 @@ static float vel_l_filt = 0.0f, vel_r_filt = 0.0f;
 
 // Command ramp: smooths abrupt step inputs so the first PID tick doesn't punch.
 // Stop commands snap target to zero and coast; ramped stops can make PID brake past zero.
-// No active braking: if a wheel is still rolling faster than a new target, coast instead
-// of commanding the opposite direction. This avoids a reverse kick after "k" then turn.
 // Preseed integral handles motor deadband on the first ramp step.
 static constexpr float LIN_ACCEL      = 0.35f;  // m/s² start/command ramp
 static constexpr float ANG_ACCEL      = 1.10f;  // rad/s² start/command ramp
 static constexpr float START_PWM_SEED = 55.0f;  // gentle deadband preseed
-static constexpr float REVERSAL_COAST_VEL = 0.8f;  // rad/s: coast before reversing a rolling wheel
+static constexpr float REVERSAL_COAST_VEL = 3.0f;  // rad/s: coast before reversing a rolling wheel (raised from 0.8 — EMI noise on left encoder was false-triggering)
 static constexpr int   PWM_SLEW_PER_TICK = 8;   // max PWM change per 30Hz control tick
 static float cmd_lin = 0.0f, cmd_ang = 0.0f;
 static float ramp_lin = 0.0f, ramp_ang = 0.0f;
-static constexpr uint32_t CMD_TIMEOUT_MS = 500;
+static constexpr uint32_t CMD_TIMEOUT_MS = 1000;
 static uint32_t t_cmd_last = 0;
 static int last_pwm_l = 0, last_pwm_r = 0;
 
@@ -96,9 +94,6 @@ static int pid_compute(PID& p, float actual, float dt) {
     float out = KP * err + KI * p.integral;
     p.prev_err = err;
     out = constrain(out, -255.0f, 255.0f);
-    if ((p.target > 0.0f && out < 0.0f) || (p.target < 0.0f && out > 0.0f)) {
-        return 0;  // no active braking against the requested wheel direction
-    }
     return (int)out;
 }
 
