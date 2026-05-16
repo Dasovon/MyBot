@@ -366,8 +366,8 @@ class DriveSequenceRunner(Node):
         parser.add_argument("--warmup", type=float, default=2.0, help="seconds to wait before starting the sequence")
         parser.add_argument(
             "--command-topic",
-            default="/diff_cont/cmd_vel_unstamped",
-            help="topic to publish commands on (default bypasses mux/smoother for direct PID tuning)",
+            default="/cmd_vel_raw",
+            help="topic to publish commands on (default matches the active teleop path)",
         )
         parser.add_argument("--command-rate", type=float, default=10.0, help="publish rate while moving")
         parser.add_argument("--log-rate", type=float, default=4.0, help="CSV sample rate")

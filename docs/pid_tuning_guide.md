@@ -50,9 +50,9 @@ For repeatable comparisons, use the test runner:
 ros2 run articubot_one pid_sequence_test --profile rebound --output /home/ryan/dev_ws/pid_sequence_log.csv
 ```
 It publishes a fixed sequence, forces a zero-command stop after every move, and logs
-the robot response to CSV for graphing. By default it publishes directly to
-`/diff_cont/cmd_vel_unstamped` so the PID loop is tested without mux/smoother drift.
-Pass `--command-topic /cmd_vel` if you want to exercise the full teleop path instead.
+the robot response to CSV for graphing. By default it publishes to `/cmd_vel_raw`,
+which matches the active teleop path in the current launch stack. Pass
+`--command-topic /diff_cont/cmd_vel_unstamped` if you temporarily bypass the smoother.
 
 ---
 
