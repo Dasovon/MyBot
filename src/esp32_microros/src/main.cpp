@@ -66,11 +66,9 @@ static float vel_l_filt = 0.0f, vel_r_filt = 0.0f;
 // only for deadband and PWM-rate protection.
 static constexpr float START_PWM_SEED = 55.0f;  // gentle deadband preseed
 static constexpr float REVERSAL_COAST_VEL = 3.0f;  // rad/s: coast before reversing a rolling wheel (raised from 0.8 — EMI noise on left encoder was false-triggering)
-static constexpr int   PWM_SLEW_PER_TICK = 8;   // max PWM change per 30Hz control tick
 static float cmd_lin = 0.0f, cmd_ang = 0.0f;
 static constexpr uint32_t CMD_TIMEOUT_MS = 1000;
 static uint32_t t_cmd_last  = 0;
-static int last_pwm_l = 0, last_pwm_r = 0;
 
 struct PID { float target = 0.0f, prev_err = 0.0f, integral = 0.0f; };
 static PID pid_l, pid_r;
@@ -92,20 +90,6 @@ static int pid_compute(PID& p, float actual, float dt) {
     p.prev_err = err;
     out = constrain(out, -255.0f, 255.0f);
     return (int)out;
-}
-
-static int slew_pwm(int requested, int& last) {
-    if (requested == 0) {
-        last = 0;
-        return 0;
-    }
-    if ((requested > 0 && last < 0) || (requested < 0 && last > 0)) {
-        last = 0;
-    }
-    int delta = requested - last;
-    delta = constrain(delta, -PWM_SLEW_PER_TICK, PWM_SLEW_PER_TICK);
-    last += delta;
-    return last;
 }
 
 // ── Encoders ──────────────────────────────────────────────────────────
@@ -299,7 +283,6 @@ void loop() {
                     pid_l.prev_err = 0.0f; pid_r.prev_err = 0.0f;
                     pid_l.integral = 0.0f; pid_r.integral = 0.0f;
                     pid_l.target = 0.0f; pid_r.target = 0.0f;
-                    last_pwm_l = 0; last_pwm_r = 0;
                     vel_l_filt = 0.0f; vel_r_filt = 0.0f;
                     cmd_lin = 0.0f; cmd_ang = 0.0f;
                     t_cmd_last = 0;
@@ -357,8 +340,8 @@ void loop() {
                 pid_l.target = tl;
                 pid_r.target = tr;
 
-                int pwm_l = slew_pwm(pid_compute(pid_l, vel_l_filt, dt), last_pwm_l);
-                int pwm_r = slew_pwm(pid_compute(pid_r, vel_r_filt, dt), last_pwm_r);
+                int pwm_l = pid_compute(pid_l, vel_l_filt, dt);
+                int pwm_r = pid_compute(pid_r, vel_r_filt, dt);
                 motor_set(PWMB_CH, BIN1, BIN2, pwm_l);
                 motor_set(PWMA_CH, AIN1, AIN2, pwm_r);
                 if (++log_tick >= 30) {
@@ -423,7 +406,6 @@ void loop() {
                 t_ping = now;
                 if (rmw_uros_ping_agent(500, 3) != RMW_RET_OK) {
                     pid_l.target = 0.0f; pid_r.target = 0.0f;
-                    last_pwm_l = 0; last_pwm_r = 0;
                     motors_stop();
                     destroy_entities();
                     state = WAITING;
