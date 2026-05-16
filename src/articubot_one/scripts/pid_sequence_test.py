@@ -355,7 +355,11 @@ class DriveSequenceRunner(Node):
         parser.add_argument("--duration", type=float, default=1.2, help="default active duration for a step")
         parser.add_argument("--stop-hold", type=float, default=0.5, help="seconds to hold zero after each active move")
         parser.add_argument("--repeats", type=int, default=1, help="repeat the chosen profile this many times")
-        parser.add_argument("--command-topic", default="/cmd_vel", help="topic to publish commands on")
+        parser.add_argument(
+            "--command-topic",
+            default="/diff_cont/cmd_vel_unstamped",
+            help="topic to publish commands on (default bypasses mux/smoother for direct PID tuning)",
+        )
         parser.add_argument("--command-rate", type=float, default=10.0, help="publish rate while moving")
         parser.add_argument("--log-rate", type=float, default=4.0, help="CSV sample rate")
         parser.add_argument("--output", default=str(DEFAULT_LOG), help="CSV output file")
