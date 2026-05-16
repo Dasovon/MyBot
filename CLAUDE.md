@@ -9,16 +9,16 @@ ROS 2 Humble differential drive robot. RPi 4 + ESP32-S3 (production stack — Ar
 - Nav2 autonomous navigation ✅ working (saved map at `~/mybot_ws/maps/my_map`)
 - RealSense D435 ✅ color + depth 640×480@15fps (RSUSB backend, fix #18)
 - **Pi fully restored after reflash** ✅: ROS Humble, mybot_ws, microros_ws, librealsense RSUSB, udev rules, SLAM map — all restored. Pi IP: 192.168.86.33
-- **ESP32-S3 full firmware validated and driving smoothly** (fixes #31, #32):
+- **ESP32-S3 driving with Pi velocity smoother** (fix #33):
   - Publishes: `/diff_cont/odom` (30Hz), `/imu/imu` (30Hz), `/battery_state` (1Hz)
   - Subscribes: `/diff_cont/cmd_vel_unstamped`
   - Robot stack auto-starts with `robot-launch.service`; `mybot-launch` remains the manual restart path
   - PID: Kp=30, Ki=150, KI_MAX=1.0, Kd=0
   - EMA filter: VEL_ALPHA=0.2 (suppresses left encoder EMI noise)
-  - Command shaping: LIN_ACCEL=0.35 m/s², ANG_ACCEL=1.10 rad/s², START_PWM_SEED=55, PWM_SLEW_PER_TICK=8
+  - Command shaping: START_PWM_SEED=55, PWM_SLEW_PER_TICK=8 (ESP32-level only; command ramping now done on Pi)
   - REVERSAL_COAST_VEL=3.0 rad/s (raised from 0.8 — EMI noise on left encoder was false-triggering coast)
   - CMD_TIMEOUT_MS=1000ms (safety stop if publisher dies while agent alive)
-  - Launch path on Pi is direct `twist_mux -> /diff_cont/cmd_vel_unstamped`; no `nav2_velocity_smoother` package on the Pi
+  - **Launch path (fix #33)**: `twist_mux → /cmd_vel_raw → vel_smoother.py (50Hz, 0.5 m/s², 1.0 rad/s²) → /diff_cont/cmd_vel_unstamped`
   - **Teleop must use `repeat_rate:=10.0`**: `ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p repeat_rate:=10.0`
   - If agent shows stuck/AGENT OFFLINE after OTA reboot: `sudo systemctl restart robot-launch.service`
 - **Waveshare 2.42" OLED display** ✅ FULLY WORKING (2026-05-15):
@@ -872,3 +872,42 @@ require a reboot.
 
 **Files changed:**
 - `src/esp32_microros/src/main.cpp` — REVERSAL_COAST_VEL 0.8→3.0, no-active-braking removed, CMD_TIMEOUT_MS 500→1000
+
+### 33) Velocity smoother — restore diff_drive_controller acceleration limiting (2026-05-15)
+
+**Symptom:** Motion after SD-card reinstall was never as smooth as the "perfect" state with the
+initial ESP32-S3 firmware. Multiple band-aids (EMA, command ramp, preseed, slew) helped but never
+fully recovered the feel.
+
+**Root cause:** When the initial ESP32-S3 production firmware (commit c62b3bb, Kp=20, Kd=12, Ki=0)
+was working perfectly, the Pi launch still had `diff_drive_controller` from `ros2_control` active.
+That controller applied acceleration limits (linear 0.5 m/s², angular 1.0 rad/s²) and published
+smoothed commands to the hardware at 50 Hz. The ESP32 PID only ever saw slow, well-conditioned
+ramps — never a raw step input.
+
+In the same commit that fixed the motor cross-wiring (fix #26, commit 19f7155), `diff_drive_controller`
+was also removed and the PID changed to Kp=30, Ki=150. After the SD-card reinstall the user pulled
+that state, losing the acceleration limiter entirely. All subsequent motion fixes were compensating
+for that missing layer.
+
+**Fix:** Pi-side `vel_smoother.py` node — subscribes to `/cmd_vel_raw` (twist_mux output), applies
+0.5 m/s² linear and 1.0 rad/s² angular acceleration limits, publishes to `/diff_cont/cmd_vel_unstamped`
+at 50 Hz. This is architecturally identical to what `diff_drive_controller` was doing.
+
+The ESP32 command ramp (LIN_ACCEL/ANG_ACCEL) was removed to avoid double-ramping, which would have
+made the response sluggish. Preseed, PWM slew, EMA filter, and reversal coast remain.
+
+**Pipeline after fix:**
+```
+teleop → /cmd_vel → twist_mux → /cmd_vel_raw → vel_smoother.py (50Hz, 0.5/1.0) → /diff_cont/cmd_vel_unstamped → ESP32
+```
+
+**Note on permanent hardware fix (not yet done):** Solder 100 nF ceramic caps from GPIO40 to GND
+and GPIO41 to GND at the ESP32 headers. This removes the EMI noise at source, allowing the EMA
+filter to be removed or relaxed, which reduces feedback lag and lets the PID respond faster.
+
+**Files changed:**
+- `src/articubot_one/scripts/vel_smoother.py` — new node (linear_accel=0.5, angular_accel=1.0, freq=50)
+- `src/articubot_one/launch/launch_robot.launch.py` — twist_mux remaps to /cmd_vel_raw; vel_smoother added
+- `src/articubot_one/CMakeLists.txt` — install vel_smoother.py
+- `src/esp32_microros/src/main.cpp` — remove LIN_ACCEL/ANG_ACCEL command ramp; ramp_lin/ramp_ang vars removed
