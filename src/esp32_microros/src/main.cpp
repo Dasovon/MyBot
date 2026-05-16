@@ -65,8 +65,10 @@ static float vel_l_filt = 0.0f, vel_r_filt = 0.0f;
 static constexpr float REVERSAL_COAST_VEL = 3.0f;  // rad/s: coast before reversing a rolling wheel (raised from 0.8 — EMI noise on left encoder was false-triggering)
 static float cmd_lin = 0.0f, cmd_ang = 0.0f;
 static constexpr uint32_t CMD_TIMEOUT_MS = 1000;
+static constexpr uint32_t ARM_ZERO_HOLD_MS = 1000;
 static uint32_t t_cmd_last  = 0;
 static bool motion_armed = false;
+static uint32_t zero_hold_start = 0;
 
 struct PID { float target = 0.0f, prev_err = 0.0f, integral = 0.0f; };
 static PID pid_l, pid_r;
@@ -176,6 +178,7 @@ static void reset_motion_state() {
     cmd_ang = 0.0f;
     t_cmd_last = 0;
     motion_armed = false;
+    zero_hold_start = 0;
     motors_stop();
 }
 
@@ -185,9 +188,6 @@ static void cmd_cb(const void* msg) {
     cmd_lin = m->linear.x;
     cmd_ang = m->angular.z;
     t_cmd_last = millis();
-    if (fabsf(cmd_lin) < 0.01f && fabsf(cmd_ang) < 0.01f) {
-        motion_armed = true;
-    }
 }
 
 // ── micro-ROS entity management ───────────────────────────────────────
@@ -357,6 +357,22 @@ void loop() {
                     motion_armed = false;
                 }
 
+                bool cmd_is_zero = fabsf(cmd_lin) < 0.01f && fabsf(cmd_ang) < 0.01f;
+                if (!motion_armed) {
+                    if (cmd_is_zero) {
+                        if (zero_hold_start == 0) {
+                            zero_hold_start = now;
+                        } else if (now - zero_hold_start >= ARM_ZERO_HOLD_MS) {
+                            motion_armed = true;
+                            log("[esp32_robot] motion armed after zero hold\n");
+                        }
+                    } else {
+                        zero_hold_start = 0;
+                    }
+                } else if (!cmd_is_zero) {
+                    zero_hold_start = 0;
+                }
+
                 // Commands arrive directly from twist_mux on the Pi; the ESP32 applies its own
                 // start preseed, timeout, and reversal-coast handling here.
                 float tl = (cmd_lin - cmd_ang * WHEEL_SEP * 0.5f) / WHEEL_RADIUS;
@@ -452,6 +468,7 @@ void loop() {
                 if (rmw_uros_ping_agent(500, 3) != RMW_RET_OK) {
                     pid_l.target = 0.0f; pid_r.target = 0.0f;
                     motion_armed = false;
+                    zero_hold_start = 0;
                     motors_stop();
                     destroy_entities();
                     state = WAITING;

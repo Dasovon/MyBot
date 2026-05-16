@@ -22,6 +22,7 @@ ROS 2 Humble differential drive robot. RPi 4 + ESP32-S3 (production stack — Ar
   - EMA filter: VEL_ALPHA=0.2 (suppresses left encoder EMI noise)
   - REVERSAL_COAST_VEL=3.0 rad/s
   - CMD_TIMEOUT_MS=1000ms (safety stop if publisher dies while agent alive)
+  - Motion arming requires a stable zero hold after boot/reconnect; a single zero packet does not re-enable motion
   - **Launch path**: `twist_mux → /cmd_vel_raw → vel_smoother.py (50Hz, 0.5 m/s², 1.0 rad/s²) → /diff_cont/cmd_vel_unstamped`
   - vel_smoother starts 2s after twist_mux (TimerAction) — prevents FastDDS SHM discovery failure (fix #34)
   - robot-launch.service cleans `/dev/shm/fastrtps_*` before each start (fix #34)

@@ -21,8 +21,8 @@ ESP32 still applies its own timeout, integral preseed, and motor PWM
 sustain/reversal handling. Kd is still not useful for startup in this robot
 because the EMA encoder filter adds lag and the motors have a hard deadband.
 Startup mechanism is **integral preseed** instead.
-The ESP32 also requires an explicit zero command after boot or reconnect before
-it will arm motion, so stale nonzero commands cannot start the wheels at boot.
+The ESP32 also requires a short stable zero hold after boot or reconnect before
+it will arm motion, so a single startup zero cannot immediately re-enable motion.
 For low-level motor tuning, use the ESP32 bench firmware in
 `src/esp32_microros/test/test_pid_bench` and capture logs on the dev machine
 over telnet. The Pi stays out of this loop until the wheel motion is already
@@ -258,7 +258,7 @@ ssh ryan@mybot "sudo systemctl restart robot-launch.service"
 # 4. Open telnet monitor
 nc esp32-mybot.local 23
 
-# 5. Make sure the command path has seen a zero twist since boot
+# 5. Make sure the command path has seen a stable zero hold since boot
 #    before the first move command.
 
 # 6. Run test (from dev machine)
