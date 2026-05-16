@@ -40,6 +40,20 @@ fresh move, so the bridge opening should not kick the wheels immediately.
 For the exact Claude Code CLI task script, see
 [claude_code_pid_test_instructions.md](./claude_code_pid_test_instructions.md).
 
+### Claude Code CLI Runner
+
+If you are using Claude Code CLI, keep the run focused on the same live path
+described above:
+
+1. Use the ESP32 bench first.
+2. Use the bridge profile only after bench motion is smooth.
+3. Log `cnt`, `tgt`, `act`, `filt`, `pwm`, and `bat`.
+4. Watch velocity traces before extending from 1 to 3 revolutions.
+5. Stop the motors after every run.
+
+The bridge profile should prove command delivery at zero first, then measure
+active-motion smoothness. Bursty velocity is still the blocker if motion pulses.
+
 ---
 
 ## Step 0 — Use The ESP32 Bench First

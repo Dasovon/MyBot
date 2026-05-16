@@ -119,7 +119,7 @@ for page in range(8):
 
 **ROS 2 integration:** `oled_display_node.py` uses this same spidev approach plus Pillow for layout rendering. Black pixels (`fill=0`) in PIL appear lit on the display; white pixels are off.
 
-The node runs as a systemd service (`oled-display.service`) that starts at boot and restarts automatically. See `docs/oled-display-plan.md` for implementation notes.
+The node runs as a systemd service (`oled-display.service`) that starts at boot and restarts automatically. See the live setup docs in `README.md`, `docs/pi-setup.md`, and `HARDWARE_MEMORY.md` for the current layout and boot behavior. `docs/oled-display-plan.md` is now archived notes only.
 
 ---
 

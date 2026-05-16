@@ -279,8 +279,7 @@ Paste:
 ```ini
 [Unit]
 Description=OLED Display Node
-Wants=network-online.target
-After=network-online.target
+After=network.target
 
 [Service]
 Type=simple
@@ -294,7 +293,9 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-The OLED service starts with the network and retries until the ESP32 feed is available.
+The OLED service starts with normal network bring-up and retries until the ESP32 feed is available.
+On this Pi, `systemd-networkd-wait-online.service` is overridden to a 10-second timeout so boot
+does not sit for two minutes waiting on full network-online state.
 
 `Restart=always` / `RestartSec=5` work together with the 30-second data timeout built into the node:
 if no ESP32 data arrives, the node exits and systemd restarts it. Repeat until `mybot-launch` is running.
@@ -335,7 +336,7 @@ After=network.target
 Type=simple
 User=ryan
 Environment="PYTHONUNBUFFERED=1"
-ExecStartPre=/bin/bash -c "rm -f /dev/shm/fastrtps_* && sudo fuser -k /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:5C:23:1C-if00 2>/dev/null; sleep 5"
+ExecStartPre=/bin/bash -c "rm -f /dev/shm/fastrtps_* && sudo fuser -k /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:5C:23:1C-if00 2>/dev/null; sleep 1"
 ExecStart=/bin/bash -c "source /opt/ros/humble/setup.bash && source /home/ryan/mybot_ws/install/setup.bash && source /home/ryan/microros_ws/install/setup.bash && ros2 launch articubot_one launch_robot.launch.py"
 Restart=on-failure
 RestartSec=5
@@ -344,7 +345,7 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-`ExecStartPre` kills any stale process holding the ESP32 USB serial device and waits 5 s for network to settle.
+`ExecStartPre` kills any stale process holding the ESP32 USB serial device and waits 1 s for the bridge to settle.
 `Restart=on-failure` (not `always`) — does not restart on clean exit (e.g., intentional stop).
 
 Enable and start:
@@ -362,7 +363,7 @@ journalctl -u robot-launch -f
 
 **Boot sequence (fully automatic):**
 1. Pi boots → `robot-launch.service` starts `micro_ros_agent` on the ESP32 USB by-id path
-2. `oled-display.service` starts on `network-online.target` → reads battery telemetry directly from the ESP32 Telnet stream
+2. `oled-display.service` starts after basic networking → reads battery telemetry directly from the ESP32 Telnet stream
 3. ESP32 boots → pings for 30 s → resets via watchdog if no agent → on next boot finds agent → connects
 4. Display shows `IP`, `BAT`, `AGE`, `ESP32 ONLINE/OFFLINE`, and `ROS UP/DOWN` once telemetry is available; motion remains disabled until `enable_motion:=true` is used
 

@@ -360,7 +360,7 @@ Memory addressing: **page mode** (`0x20 0x02`) — must match `_show()` which us
 
 **Systemd service:** `/etc/systemd/system/oled-display.service` (Pi only, not in git)
 - `User=ryan` — requires ryan to be in gpio/spi/dialout groups (see above)
-- `Wants=network-online.target` / `After=network-online.target` — start as soon as networking is ready
+- `After=network.target` — start once basic networking is up; the node retries until ESP32 telemetry is available
 - `Restart=always RestartSec=5`
 - NOT in `launch_robot.launch.py` — systemd handles it independently
 
