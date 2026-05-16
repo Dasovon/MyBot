@@ -58,7 +58,7 @@ Based on the [Articulated Robotics](https://articulatedrobotics.xyz/category/bui
 | Display | Waveshare 2.42" OLED | SSD1309, SPI0, starts at boot |
 | Power distribution | DFRobot DFR0205 | DC-DC buck converter, 3.6–25V in, 5A/25W |
 
-**Chassis:** custom differential drive, 240×200mm, dual-deck. Wheel separation 179mm, wheel radius 34mm.
+**Chassis:** custom differential drive, 240×200mm, dual-deck. Wheel separation 179mm, wheel diameter 68mm (radius 34mm).
 
 ### Power architecture
 

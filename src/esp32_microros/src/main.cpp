@@ -48,11 +48,11 @@ static constexpr float COUNTS_TO_RAD = (2.0f * M_PI) / ENC_CPR;
 // Ki=5 + preseed: preseed sets integral so first tick delivers START_PWM_SEED PWM,
 //   overcoming motor deadband instantly without the overshoot that Kd caused.
 // Ki then handles steady-state tracking error.
-static constexpr float KP            =  20.0f;
+static constexpr float KP            =  28.0f;
 static constexpr float KD            =   0.0f;
-static constexpr float KI            =   5.0f;
-static constexpr float KI_MAX        =  10.0f;
-static constexpr float START_PWM_SEED = 55.0f;  // PWM at first tick from standstill
+static constexpr float KI            =   9.0f;
+static constexpr float KI_MAX        =  24.0f;
+static constexpr float START_PWM_SEED = 120.0f;  // PWM at first tick from standstill
 
 
 // ── Velocity lowpass filter ───────────────────────────────────────────
@@ -142,6 +142,35 @@ static void log(const char* fmt, Args... args) {
     char buf[256];
     snprintf(buf, sizeof(buf), fmt, args...);
     TelnetStream.print(buf);
+}
+
+static int read_telnet_char() {
+    if (TelnetStream.available()) return TelnetStream.read();
+    return -1;
+}
+
+static void reset_motion_state() {
+    noInterrupts();
+    enc_l = 0;
+    enc_r = 0;
+    interrupts();
+    prev_l = 0;
+    prev_r = 0;
+    odom_x = 0.0f;
+    odom_y = 0.0f;
+    odom_th = 0.0f;
+    pid_l.prev_err = 0.0f;
+    pid_r.prev_err = 0.0f;
+    pid_l.integral = 0.0f;
+    pid_r.integral = 0.0f;
+    pid_l.target = 0.0f;
+    pid_r.target = 0.0f;
+    vel_l_filt = 0.0f;
+    vel_r_filt = 0.0f;
+    cmd_lin = 0.0f;
+    cmd_ang = 0.0f;
+    t_cmd_last = 0;
+    motors_stop();
 }
 
 // ── cmd_vel callback ──────────────────────────────────────────────────
@@ -258,13 +287,19 @@ void setup() {
 
 // ── Loop timers ───────────────────────────────────────────────────────
 static uint32_t t_control = 0;
-static uint8_t  log_tick  = 0;   // throttle telnet logs to 1 Hz (every 30 control ticks)
+static uint8_t  log_tick  = 0;   // log every control tick for count-threshold tests
 static uint32_t t_battery = 0;
 static uint32_t t_ping    = 0;
 
 void loop() {
     ArduinoOTA.handle();
     uint32_t now = millis();
+
+    int c = read_telnet_char();
+    if (c == 'r') {
+        reset_motion_state();
+        log("[esp32_robot] reset\n");
+    }
 
     switch (state) {
         case WAITING:
@@ -273,15 +308,7 @@ void loop() {
                 waiting_start = 0;
                 if (create_entities()) {
                     rmw_uros_sync_session(1000);
-                    odom_x = 0.0f; odom_y = 0.0f; odom_th = 0.0f;
-                    noInterrupts(); enc_l = 0; enc_r = 0; interrupts();
-                    prev_l = 0; prev_r = 0;
-                    pid_l.prev_err = 0.0f; pid_r.prev_err = 0.0f;
-                    pid_l.integral = 0.0f; pid_r.integral = 0.0f;
-                    pid_l.target = 0.0f; pid_r.target = 0.0f;
-                    vel_l_filt = 0.0f; vel_r_filt = 0.0f;
-                    cmd_lin = 0.0f; cmd_ang = 0.0f;
-                    t_cmd_last = 0;
+                    reset_motion_state();
                     t_control = now; t_battery = now; t_ping = now;
                     state = CONNECTED;
                     log("[esp32_robot] connected\n");
@@ -345,10 +372,10 @@ void loop() {
                 int pwm_r = pid_compute(pid_r, vel_r_filt, dt);
                 motor_set(PWMB_CH, BIN1, BIN2, pwm_l);
                 motor_set(PWMA_CH, AIN1, AIN2, pwm_r);
-                if (++log_tick >= 30) {
+                if (++log_tick >= 1) {
                     log_tick = 0;
-                    log("[enc] tgt=%.2f/%.2f act=%.2f/%.2f filt=%.2f/%.2f\n",
-                        pid_l.target, pid_r.target, vel_l, vel_r, vel_l_filt, vel_r_filt);
+                    log("[enc] cnt=%ld/%ld tgt=%.2f/%.2f act=%.2f/%.2f filt=%.2f/%.2f\n",
+                        l, r, pid_l.target, pid_r.target, vel_l, vel_r, vel_l_filt, vel_r_filt);
                 }
 
                 float dist_l = (float)dl * COUNTS_TO_RAD * WHEEL_RADIUS;

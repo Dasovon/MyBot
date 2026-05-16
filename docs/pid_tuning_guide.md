@@ -6,6 +6,7 @@
 |---|---|
 | Robot | Differential drive, JGA25-371 130RPM 45:1 |
 | Controller | ESP32-S3 → micro-ROS → Pi |
+| Wheel diameter | 68 mm |
 | Wheel radius | 0.034 m |
 | Wheel separation | 0.179 m |
 | Encoder CPR | 1010 counts/rev |
@@ -19,6 +20,11 @@ from `twist_mux`, then applies its own timeout, integral preseed, and motor PWM
 slew/reversal handling. Kd is still not useful for startup in this robot because
 the EMA encoder filter adds lag and the motors have a hard deadband.
 Startup mechanism is **integral preseed** instead.
+
+**Current test note**: the one-turn encoder test now reaches a full wheel
+rotation, but the motion is still stop-and-go instead of smooth continuous
+drive. Fix that first before spending more time on PID gain changes or longer
+rotation tests.
 
 ---
 
@@ -47,12 +53,15 @@ ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist '{}'
 
 For repeatable comparisons, use the test runner:
 ```bash
-ros2 run articubot_one pid_sequence_test --profile rebound --output /home/ryan/dev_ws/pid_sequence_log.csv
+ros2 run articubot_one pid_sequence_test.py --profile rebound --output /home/ryan/dev_ws/pid_sequence_log.csv
 ```
-It publishes a fixed sequence, forces a zero-command stop after every move, and logs
-the robot response to CSV for graphing. By default it publishes to `/cmd_vel_raw`,
-which matches the active teleop path in the current launch stack. Pass
-`--command-topic /diff_cont/cmd_vel_unstamped` if you temporarily bypass the smoother.
+It publishes a fixed sequence, forces a zero-command stop after every move, logs the
+robot response to CSV for graphing, and connects to the ESP32 telnet encoder stream
+so the wheel response is measured directly. The final summary reports commanded
+speed, odom response, encoder actuals, and battery power draw. By default it publishes
+to `/cmd_vel_raw`, which matches the active teleop path in the current launch stack.
+Pass `--command-topic /diff_cont/cmd_vel_unstamped` if you temporarily bypass the
+smoother.
 
 ---
 
@@ -265,3 +274,16 @@ ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist '{}'
 ```
 
 Good tracking: `filt` within ~10–15% of `tgt`, stable, not oscillating.
+
+### Current one-turn result
+
+Latest count-based test:
+
+- Target: 1010 counts
+- Observed stop: about 1098 / 1095 counts
+- Result: full rotation confirmed
+- Behavior: the wheel advanced in bursts, not a smooth continuous turn
+
+That stop-and-go motion is the next problem to fix. Do not move to the
+three-rotation test until the one-turn motion is smooth enough to hold a
+continuous spin without visible pulsing.
