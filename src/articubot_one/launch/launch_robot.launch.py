@@ -24,8 +24,17 @@ def generate_launch_description():
             package="twist_mux",
             executable="twist_mux",
             parameters=[twist_mux_params],
-            remappings=[('/cmd_vel_out', '/diff_cont/cmd_vel_unstamped')]
+            remappings=[('/cmd_vel_out', '/cmd_vel_raw')]
         )
+
+    # Replicates diff_drive_controller's acceleration limiting (0.5 m/s², 1.0 rad/s²).
+    # Without this, step commands from teleop reach the ESP32 PID as raw steps,
+    # causing startup punch. This was the missing piece after the SD-card reinstall.
+    vel_smoother = Node(
+        package='articubot_one',
+        executable='vel_smoother.py',
+        parameters=[{'linear_accel': 0.5, 'angular_accel': 1.0, 'freq': 50.0}],
+    )
 
     micro_ros_agent = Node(
         package='micro_ros_agent',
@@ -53,6 +62,7 @@ def generate_launch_description():
     return LaunchDescription([
         rsp,
         twist_mux,
+        vel_smoother,
         micro_ros_agent,
         TimerAction(period=8.0, actions=[lidar]),
         camera,

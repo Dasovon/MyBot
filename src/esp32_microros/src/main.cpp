@@ -61,18 +61,15 @@ static constexpr float KI_MAX =   1.0f;  // integral clamp (PWM contribution = K
 static constexpr float VEL_ALPHA = 0.2f;
 static float vel_l_filt = 0.0f, vel_r_filt = 0.0f;
 
-// Command ramp: smooths abrupt step inputs so the first PID tick doesn't punch.
-// Stop commands snap target to zero and coast; ramped stops can make PID brake past zero.
-// Preseed integral handles motor deadband on the first ramp step.
-static constexpr float LIN_ACCEL      = 0.35f;  // m/s² start/command ramp
-static constexpr float ANG_ACCEL      = 1.10f;  // rad/s² start/command ramp
+// Velocity smoother on Pi (vel_smoother.py) now handles command ramping —
+// commands arrive pre-conditioned at 50 Hz. ESP32 applies preseed and slew
+// only for deadband and PWM-rate protection.
 static constexpr float START_PWM_SEED = 55.0f;  // gentle deadband preseed
 static constexpr float REVERSAL_COAST_VEL = 3.0f;  // rad/s: coast before reversing a rolling wheel (raised from 0.8 — EMI noise on left encoder was false-triggering)
 static constexpr int   PWM_SLEW_PER_TICK = 8;   // max PWM change per 30Hz control tick
 static float cmd_lin = 0.0f, cmd_ang = 0.0f;
-static float ramp_lin = 0.0f, ramp_ang = 0.0f;
 static constexpr uint32_t CMD_TIMEOUT_MS = 1000;
-static uint32_t t_cmd_last = 0;
+static uint32_t t_cmd_last  = 0;
 static int last_pwm_l = 0, last_pwm_r = 0;
 
 struct PID { float target = 0.0f, prev_err = 0.0f, integral = 0.0f; };
@@ -305,7 +302,6 @@ void loop() {
                     last_pwm_l = 0; last_pwm_r = 0;
                     vel_l_filt = 0.0f; vel_r_filt = 0.0f;
                     cmd_lin = 0.0f; cmd_ang = 0.0f;
-                    ramp_lin = 0.0f; ramp_ang = 0.0f;
                     t_cmd_last = 0;
                     t_control = now; t_battery = now; t_ping = now;
                     state = CONNECTED;
@@ -345,16 +341,9 @@ void loop() {
                     cmd_ang = 0.0f;
                 }
 
-                // Ramp cmd toward user command. Stop commands snap target to zero and coast.
-                if (fabsf(cmd_lin) < 0.01f && fabsf(cmd_ang) < 0.01f) {
-                    ramp_lin = 0.0f;
-                    ramp_ang = 0.0f;
-                } else {
-                    ramp_lin += constrain(cmd_lin - ramp_lin, -LIN_ACCEL * dt, LIN_ACCEL * dt);
-                    ramp_ang += constrain(cmd_ang - ramp_ang, -ANG_ACCEL * dt, ANG_ACCEL * dt);
-                }
-                float tl = (ramp_lin - ramp_ang * WHEEL_SEP * 0.5f) / WHEEL_RADIUS;
-                float tr = (ramp_lin + ramp_ang * WHEEL_SEP * 0.5f) / WHEEL_RADIUS;
+                // Commands arrive pre-smoothed from vel_smoother.py on Pi (0.5 m/s², 1.0 rad/s²).
+                float tl = (cmd_lin - cmd_ang * WHEEL_SEP * 0.5f) / WHEEL_RADIUS;
+                float tr = (cmd_lin + cmd_ang * WHEEL_SEP * 0.5f) / WHEEL_RADIUS;
 
                 // Preseed integral on rest→move to overcome deadband on first ramp step
                 auto preseed = [](PID& p, float nt) {
