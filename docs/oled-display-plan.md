@@ -48,11 +48,11 @@ Enable SPI (one-time): `sudo raspi-config` → Interface Options → SPI → Ena
 
 ```
 ┌────────────────────────────────┐
-│ MyBot          192.168.86.33   │  ← IP via UDP socket trick (not gethostbyname)
-│ BAT  11.4V   0.12A             │  ← /battery_state
-│ VEL  0.24m/s  0.0r/s           │  ← /diff_cont/odom
-│ POS  x=1.23  y=0.87  45d       │  ← /odom (EKF filtered)
-│ AGENT OFFLINE                  │  ← nav/connection status
+│ IP 192.168.86.33               │  ← Pi IP via UDP socket trick (not gethostbyname)
+│ BAT 11.4V  0.12A               │  ← ESP32 telnet telemetry
+│ AGE 00:00:12                   │  ← time since last battery update
+│ ESP32 ONLINE                   │  ← direct ESP32 telemetry link status
+│ ROS UP                         │  ← robot-launch.service state
 └────────────────────────────────┘
 ```
 
@@ -60,11 +60,15 @@ Status line states:
 
 | State | Display |
 |---|---|
-| No odom data for >3s | `AGENT OFFLINE` |
-| Connected, Nav2 not running | `TELEOP` |
-| Connected, no goal | `IDLE` |
-| Actively navigating | `NAVIGATING` |
-| Goal reached | `GOAL REACHED` |
+| Fresh battery telemetry | `ESP32 ONLINE` |
+| Stale or missing telemetry | `ESP32 OFFLINE` |
+
+ROS line states:
+
+| State | Display |
+|---|---|
+| `robot-launch.service` active | `ROS UP` |
+| `robot-launch.service` inactive | `ROS DOWN` |
 
 ---
 
@@ -96,7 +100,8 @@ File: `/etc/systemd/system/oled-display.service`
 ```ini
 [Unit]
 Description=MyBot OLED Display Node
-After=network.target
+Wants=network-online.target
+After=network-online.target
 
 [Service]
 Type=simple
@@ -132,3 +137,4 @@ journalctl -u oled-display -f
   s.close()
   ```
 - **SPI mode 3 required** (`sp.mode = 0b11`) — Waveshare module requires CPOL=1, CPHA=1.
+- **OLED now reads battery directly from the ESP32 telnet stream** — the screen no longer depends on the ROS battery topic.

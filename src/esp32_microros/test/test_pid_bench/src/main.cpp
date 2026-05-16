@@ -36,6 +36,8 @@ static constexpr float KI            = 9.0f;
 static constexpr float KI_MAX        = 24.0f;
 static constexpr float START_PWM_SEED = 120.0f;
 static constexpr float RUN_PWM_FLOOR  = 72.0f;
+static constexpr float RUN_PWM_FLOOR_ACTUAL = 2.0f;
+static constexpr uint32_t RUN_PWM_START_HOLD_MS = 400;
 static constexpr float VEL_ALPHA      = 0.2f;
 static constexpr float REVERSAL_COAST_VEL = 3.0f;
 static constexpr uint32_t CONTROL_PERIOD_MS = 33;
@@ -55,6 +57,7 @@ static long prev_l = 0, prev_r = 0;
 static uint32_t t_control = 0;
 static uint32_t t_battery = 0;
 static uint32_t t_mode = 0;
+static uint32_t motion_start_ms = 0;
 
 static Adafruit_INA219 ina(0x40);
 
@@ -149,6 +152,7 @@ static void reset_motion_state() {
     vel_l_filt = 0.0f;
     vel_r_filt = 0.0f;
     motors_stop();
+    motion_start_ms = 0;
 }
 
 static int pid_compute(PID& p, float actual, float dt) {
@@ -166,7 +170,11 @@ static int pid_compute(PID& p, float actual, float dt) {
     p.integral = constrain(p.integral + err * dt, -KI_MAX, KI_MAX);
     float out = KP * err + KD * (err - p.prev_err) / dt + KI * p.integral;
     p.prev_err = err;
-    if (fabsf(p.target) >= 0.01f && fabsf(out) < RUN_PWM_FLOOR) {
+    bool in_start_hold = motion_start_ms > 0 &&
+        (millis() - motion_start_ms) < RUN_PWM_START_HOLD_MS;
+    if (fabsf(p.target) >= 0.01f &&
+        (in_start_hold || fabsf(actual) < RUN_PWM_FLOOR_ACTUAL) &&
+        fabsf(out) < RUN_PWM_FLOOR) {
         out = copysignf(RUN_PWM_FLOOR, p.target);
     }
     out = constrain(out, -255.0f, 255.0f);
@@ -178,6 +186,7 @@ static void start_pid_bench() {
     pid_goal_counts = PID_GOAL_COUNTS;
     pid_started_at = millis();
     pid_phase_started_at = millis();
+    motion_start_ms = millis();
     run_mode = MODE_PID;
     t_mode = millis();
     log("\n[bench] pid start target=%.2f m/s goal=%ld counts\n", PID_LIN, pid_goal_counts);

@@ -1,15 +1,27 @@
 #!/usr/bin/env python3
 import math
 import os
+import re
 import socket
+import subprocess
+import telnetlib
+import threading
 import time
 
-import rclpy
-from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
-from sensor_msgs.msg import BatteryState
-from nav_msgs.msg import Odometry
-from action_msgs.msg import GoalStatusArray, GoalStatus
+FONT_PATH = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
+FONT_SIZE = 10
+DC_PIN = 25
+RST_PIN = 27
+WIDTH = 128
+HEIGHT = 64
+
+ESP32_HOST = os.environ.get('OLED_ESP32_HOST', 'esp32-mybot.local')
+ESP32_PORT = int(os.environ.get('OLED_ESP32_PORT', '23'))
+BATTERY_LINE_RE = re.compile(r'\[bat\]\s+(?P<v>\d+(?:\.\d+)?)V\s+(?P<i>-?\d+(?:\.\d+)?)A')
+
+DATA_TIMEOUT = 30.0
+STALE_STATUS_S = 3.0
+RECONNECT_DELAY_S = 2.0
 
 try:
     import spidev
@@ -19,49 +31,89 @@ try:
 except ImportError:
     DISPLAY_AVAILABLE = False
 
-FONT_PATH = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
-FONT_SIZE = 11
-AGENT_TIMEOUT = 3.0
-DC_PIN = 25
-RST_PIN = 27
-WIDTH = 128
-HEIGHT = 64
 
-DATA_TIMEOUT = 30.0  # seconds to wait for ESP32 data before restarting
+class BatteryFeed:
+    def __init__(self, host: str, port: int):
+        self.host = host
+        self.port = port
+        self.voltage = None
+        self.current = None
+        self.last_update_t = 0.0
+        self.connected = False
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
 
-BEST_EFFORT_QOS = QoSProfile(
-    depth=10,
-    reliability=ReliabilityPolicy.BEST_EFFORT,
-    durability=DurabilityPolicy.VOLATILE,
-)
+    def stop(self):
+        self._stop.set()
+        self._thread.join(timeout=2.0)
+
+    def snapshot(self):
+        with self._lock:
+            return self.voltage, self.current, self.last_update_t, self.connected
+
+    def _set(self, voltage=None, current=None, connected=None):
+        with self._lock:
+            if voltage is not None:
+                self.voltage = voltage
+            if current is not None:
+                self.current = current
+            if connected is not None:
+                self.connected = connected
+            if voltage is not None or current is not None:
+                self.last_update_t = time.monotonic()
+
+    def _run(self):
+        while not self._stop.is_set():
+            try:
+                self._set(connected=False)
+                tn = telnetlib.Telnet(self.host, self.port, timeout=5)
+                self._set(connected=True)
+                buf = b''
+                while not self._stop.is_set():
+                    chunk = tn.read_until(b'\n', timeout=1)
+                    if chunk:
+                        buf += chunk
+                        while b'\n' in buf:
+                            raw, buf = buf.split(b'\n', 1)
+                            self._consume_line(raw.decode('utf-8', errors='ignore'))
+                try:
+                    tn.close()
+                except Exception:
+                    pass
+            except Exception:
+                self._set(connected=False)
+                time.sleep(RECONNECT_DELAY_S)
+
+    def _consume_line(self, line: str):
+        m = BATTERY_LINE_RE.search(line)
+        if not m:
+            return
+        self._set(voltage=float(m.group('v')), current=float(m.group('i')))
 
 
-class OledDisplayNode(Node):
+class OledDisplay:
     def __init__(self):
-        super().__init__('oled_display')
-
         self._spi = None
         self._font = None
+        self._feed = BatteryFeed(ESP32_HOST, ESP32_PORT)
+        self._node_start_t = time.monotonic()
         self._init_display()
 
-        self._battery_voltage = None
-        self._battery_current = None
-        self._vel_linear = None
-        self._vel_angular = None
-        self._pos_x = None
-        self._pos_y = None
-        self._pos_yaw = None
-        self._last_odom_t = 0.0
-        self._nav_status = 'UNKNOWN'
-        self._node_start_t = time.monotonic()
-
-        self.create_subscription(BatteryState, '/battery_state', self._battery_cb, BEST_EFFORT_QOS)
-        self.create_subscription(Odometry, '/diff_cont/odom', self._drive_odom_cb, BEST_EFFORT_QOS)
-        self.create_subscription(Odometry, '/odom', self._ekf_odom_cb, BEST_EFFORT_QOS)
-        self.create_subscription(GoalStatusArray, '/navigate_to_pose/_action/status', self._nav_cb, 10)
-
-        self.create_timer(0.5, self._render)
-        self.get_logger().info('OLED display node started')
+    def close(self):
+        try:
+            self._feed.stop()
+        finally:
+            try:
+                if self._spi is not None:
+                    self._spi.close()
+            except Exception:
+                pass
+            try:
+                GPIO.cleanup()
+            except Exception:
+                pass
 
     def _cmd(self, c):
         GPIO.output(DC_PIN, GPIO.LOW)
@@ -69,15 +121,12 @@ class OledDisplayNode(Node):
 
     def _init_display(self):
         if not DISPLAY_AVAILABLE:
-            self.get_logger().warn('spidev/RPi.GPIO not installed — display disabled')
+            print('[oled_display] spidev/RPi.GPIO not installed - display disabled', flush=True)
             return
         try:
             GPIO.setwarnings(False)
             GPIO.setmode(GPIO.BCM)
             GPIO.setup(DC_PIN, GPIO.OUT, initial=GPIO.LOW)
-            # Drive RST LOW before opening SPI — holds display in reset while
-            # the SPI clock line transitions to its idle state (HIGH for mode 3),
-            # preventing spurious commands from reaching the SSD1309 on first boot.
             GPIO.setup(RST_PIN, GPIO.OUT, initial=GPIO.LOW)
 
             self._spi = spidev.SpiDev()
@@ -85,10 +134,6 @@ class OledDisplayNode(Node):
             self._spi.max_speed_hz = 100000
             self._spi.mode = 0b11
 
-            # On first kernel boot the SPI controller isn't fully settled.
-            # One dummy byte isn't enough — close+reopen forces the kernel to
-            # fully re-apply the mode/speed config before the real init sequence.
-            # RST is LOW so the display ignores all of this.
             self._spi.writebytes([0x00])
             time.sleep(0.1)
             self._spi.close()
@@ -97,35 +142,36 @@ class OledDisplayNode(Node):
             self._spi.mode = 0b11
             time.sleep(0.05)
 
-            # Hardware reset — RST is already LOW from setup above
-            time.sleep(0.1)                       # hold in reset
-            GPIO.output(RST_PIN, GPIO.HIGH); time.sleep(0.1)
-            GPIO.output(RST_PIN, GPIO.LOW);  time.sleep(0.1)
-            GPIO.output(RST_PIN, GPIO.HIGH); time.sleep(0.2)  # longer settle
+            time.sleep(0.1)
+            GPIO.output(RST_PIN, GPIO.HIGH)
+            time.sleep(0.1)
+            GPIO.output(RST_PIN, GPIO.LOW)
+            time.sleep(0.1)
+            GPIO.output(RST_PIN, GPIO.HIGH)
+            time.sleep(0.2)
 
-            # SSD1309 init sequence
-            self._cmd(0xAE)          # display off
-            self._cmd(0x20); self._cmd(0x02)  # page addressing mode (matches _show)
-            self._cmd(0x40)          # start line 0
-            self._cmd(0xA1)          # segment remap (col 127 = SEG0)
-            self._cmd(0xA6)          # normal display (not inverted)
-            self._cmd(0xA8); self._cmd(0x3F)  # multiplex ratio 64
-            self._cmd(0xC8)          # COM scan direction remapped
-            self._cmd(0xD3); self._cmd(0x00)  # display offset 0
-            self._cmd(0xD5); self._cmd(0x80)  # clock divide / osc freq
-            self._cmd(0xD9); self._cmd(0x22)  # pre-charge period
-            self._cmd(0xDA); self._cmd(0x12)  # COM pins config
-            self._cmd(0xDB); self._cmd(0x40)  # VCOMH deselect level
-            self._cmd(0x81); self._cmd(0x7F)  # contrast
-            self._cmd(0xAF)          # display ON
-            self._cmd(0xA5)          # all pixels ON — warmup
+            self._cmd(0xAE)
+            self._cmd(0x20); self._cmd(0x02)
+            self._cmd(0x40)
+            self._cmd(0xA1)
+            self._cmd(0xA6)
+            self._cmd(0xA8); self._cmd(0x3F)
+            self._cmd(0xC8)
+            self._cmd(0xD3); self._cmd(0x00)
+            self._cmd(0xD5); self._cmd(0x80)
+            self._cmd(0xD9); self._cmd(0x22)
+            self._cmd(0xDA); self._cmd(0x12)
+            self._cmd(0xDB); self._cmd(0x40)
+            self._cmd(0x81); self._cmd(0x7F)
+            self._cmd(0xAF)
+            self._cmd(0xA5)
             time.sleep(1.0)
-            self._cmd(0xA4)          # resume to GDDRAM content
+            self._cmd(0xA4)
 
             self._font = ImageFont.truetype(FONT_PATH, FONT_SIZE)
-            self.get_logger().info('Display init OK')
+            print('[oled_display] Display init OK', flush=True)
         except Exception as e:
-            self.get_logger().warn(f'Display init failed: {e}')
+            print(f'[oled_display] Display init failed: {e}', flush=True)
             self._spi = None
 
     def _show(self, image):
@@ -145,100 +191,90 @@ class OledDisplayNode(Node):
                 row.append(~byte & 0xFF)
             self._spi.writebytes(row)
 
-    def _battery_cb(self, msg):
-        self._battery_voltage = msg.voltage
-        self._battery_current = msg.current
+    def _status_line(self, battery_voltage, battery_age_s, connected):
+        if battery_voltage is None:
+            if (time.monotonic() - self._node_start_t) > DATA_TIMEOUT:
+                return 'ESP32 OFFLINE'
+            return 'STARTING'
+        if battery_age_s <= STALE_STATUS_S:
+            return 'ESP32 ONLINE'
+        if connected:
+            return 'ESP32 ONLINE'
+        return 'ESP32 OFFLINE'
 
-    def _drive_odom_cb(self, msg):
-        self._last_odom_t = time.monotonic()
-        self._vel_linear = msg.twist.twist.linear.x
-        self._vel_angular = msg.twist.twist.angular.z
+    def _format_age(self, age_s):
+        total = max(0, int(age_s))
+        hours = total // 3600
+        minutes = (total % 3600) // 60
+        seconds = total % 60
+        return f'{hours:02d}:{minutes:02d}:{seconds:02d}'
 
-    def _ekf_odom_cb(self, msg):
-        self._pos_x = msg.pose.pose.position.x
-        self._pos_y = msg.pose.pose.position.y
-        q = msg.pose.pose.orientation
-        yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y),
-                         1.0 - 2.0 * (q.y * q.y + q.z * q.z))
-        self._pos_yaw = math.degrees(yaw)
-
-    def _nav_cb(self, msg):
-        if not msg.status_list:
-            self._nav_status = 'IDLE'
-            return
-        s = msg.status_list[-1].status
-        if s == GoalStatus.STATUS_EXECUTING:
-            self._nav_status = 'NAVIGATING'
-        elif s == GoalStatus.STATUS_SUCCEEDED:
-            self._nav_status = 'SUCCEEDED'
-        elif s in (GoalStatus.STATUS_CANCELED, GoalStatus.STATUS_ABORTED):
-            self._nav_status = 'IDLE'
-        else:
-            self._nav_status = 'IDLE'
-
-    def _status_line(self):
-        if self._last_odom_t == 0.0 or (time.monotonic() - self._last_odom_t) > AGENT_TIMEOUT:
-            return 'AGENT OFFLINE'
-        if self._nav_status == 'NAVIGATING':
-            return 'NAVIGATING'
-        if self._nav_status == 'SUCCEEDED':
-            return 'GOAL REACHED'
-        if self._nav_status == 'UNKNOWN':
-            return 'TELEOP'
-        return 'IDLE'
-
-    def _render(self):
-        if self._spi is None:
-            return
-
-        # No ESP32 data yet — DDS endpoint matching requires both sides running simultaneously.
-        # Exit so systemd restarts us; retry until the robot stack is live.
-        if self._battery_voltage is None and (time.monotonic() - self._node_start_t) > DATA_TIMEOUT:
-            self.get_logger().warn('No ESP32 data in 30s — restarting to renegotiate DDS')
-            os._exit(1)
-
+    def _ros_status(self):
         try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(('8.8.8.8', 80))
-            ip = s.getsockname()[0]
-            s.close()
+            result = subprocess.run(
+                ['systemctl', 'is-active', 'robot-launch.service'],
+                capture_output=True,
+                text=True,
+                timeout=1.0,
+                check=False,
+            )
+            return 'ROS UP' if result.stdout.strip() == 'active' else 'ROS DOWN'
         except Exception:
-            ip = '?.?.?.?'
+            return 'ROS DOWN'
 
-        bat = (f'{self._battery_voltage:.1f}V  {self._battery_current:.2f}A'
-               if self._battery_voltage is not None else '--')
-        vel = (f'{self._vel_linear:.2f}m/s  {self._vel_angular:.1f}r/s'
-               if self._vel_linear is not None else '--')
-        pos = (f'x={self._pos_x:.2f} y={self._pos_y:.2f} {self._pos_yaw:.0f}d'
-               if self._pos_x is not None else '--')
+    def render_loop(self):
+        while True:
+            if self._spi is None:
+                time.sleep(2.0)
+                continue
 
-        # White background (off), black text (lit) — matches SSD1309 pixel convention
-        img = Image.new('1', (WIDTH, HEIGHT), 1)
-        draw = ImageDraw.Draw(img)
-        f = self._font
+            battery_v, battery_a, battery_t, connected = self._feed.snapshot()
+            battery_age_s = (time.monotonic() - battery_t) if battery_t else 999.0
 
-        draw.text((4,  0), f'MyBot  {ip}', font=f, fill=0)
-        draw.text((4, 13), f'BAT {bat}', font=f, fill=0)
-        draw.text((4, 26), f'VEL {vel}', font=f, fill=0)
-        draw.text((4, 39), f'POS {pos}', font=f, fill=0)
-        draw.text((4, 52), self._status_line(), font=f, fill=0)
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.connect(('8.8.8.8', 80))
+                ip = s.getsockname()[0]
+                s.close()
+            except Exception:
+                ip = '?.?.?.?'
 
-        try:
-            self._show(img)
-        except Exception as e:
-            self.get_logger().warn(f'Display render error: {e}')
+            bat = (f'{battery_v:.1f}V  {battery_a:.2f}A'
+                   if battery_v is not None else '--')
+            esp32_status = self._status_line(battery_v, battery_age_s, connected)
+            ros_status = self._ros_status()
+            age_text = self._format_age(battery_age_s)
+
+            img = Image.new('1', (WIDTH, HEIGHT), 1)
+            draw = ImageDraw.Draw(img)
+            f = self._font
+
+            draw.text((4, 0), f'IP {ip}', font=f, fill=0)
+            draw.text((4, 12), f'BAT {bat}', font=f, fill=0)
+            draw.text((4, 24), f'AGE {age_text}', font=f, fill=0)
+            draw.text((4, 36), esp32_status, font=f, fill=0)
+            draw.text((4, 48), ros_status, font=f, fill=0)
+
+            try:
+                self._show(img)
+            except Exception as e:
+                print(f'[oled_display] Display render error: {e}', flush=True)
+
+            if battery_v is None and (time.monotonic() - self._node_start_t) > DATA_TIMEOUT:
+                print('[oled_display] No ESP32 battery data in 30s - restarting to renegotiate', flush=True)
+                os._exit(1)
+
+            time.sleep(0.5)
 
 
 def main():
-    rclpy.init()
-    node = OledDisplayNode()
+    display = OledDisplay()
     try:
-        rclpy.spin(node)
+        display.render_loop()
     except KeyboardInterrupt:
         pass
     finally:
-        node.destroy_node()
-        rclpy.shutdown()
+        display.close()
 
 
 if __name__ == '__main__':

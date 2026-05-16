@@ -13,6 +13,7 @@ ROS 2 Humble differential drive robot. RPi 4 + ESP32-S3 (production stack — Ar
   - Publishes: `/diff_cont/odom` (30Hz), `/imu/imu` (30Hz), `/battery_state` (1Hz)
   - Subscribes: `/diff_cont/cmd_vel_unstamped`
   - Robot stack auto-starts with `robot-launch.service`; `mybot-launch` remains the manual restart path
+  - `robot-launch.service` now defaults to bridge-only on boot; motion is opt-in, and camera/lidar remain opt-in launch args so unplugged hardware does not kill the stack
   - `micro_ros_agent` now targets the stable USB by-id path:
     `/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:5C:23:1C-if00`
   - **PID (fix #34)**: Kp=20, Ki=5, Kd=0, KI_MAX=10, START_PWM_SEED=55
@@ -37,14 +38,27 @@ ROS 2 Humble differential drive robot. RPi 4 + ESP32-S3 (production stack — Ar
   - Use the dev machine to capture the ESP32 telnet log for graphs
 - **Waveshare 2.42" OLED display** ✅ FULLY WORKING (2026-05-15):
   - `oled-display.service` ENABLED, running as `ryan`, survives cold power cycle
-  - Shows: IP, battery V/A, velocity, position, nav status — all data from ESP32
+  - Shows: IP, battery V/A, telemetry age, `ESP32 ONLINE/OFFLINE`, and `ROS UP/DOWN`
+  - Reads battery telemetry directly from the ESP32 Telnet stream; it no longer depends on DDS battery subscriptions
   - Root cause of "dark display": RPi.GPIO requires gpio/spi groups (fix #25 below)
-  - Root cause of "BAT -- / AGENT OFFLINE": DDS late-joining timing (fix #27 below)
+  - Root cause of "BAT -- / AGENT OFFLINE": the old DDS-based OLED data path; OLED now reads ESP32 telemetry directly
   - Service uses default FastDDS (SHM+UDP); self-restart loop in node handles timing
 - **Fully automatic boot** ✅ (2026-05-15):
   - `robot-launch.service` ENABLED — starts micro_ros_agent + sensor stack at boot
   - ESP32 watchdog: 30 s in WAITING state → `esp_restart()` → USB re-enumerates cleanly (fix #29)
   - No manual `mybot-launch` or reset button needed after power-on
+
+### Recurring Error Rule
+
+When the same failure shows up more than once, do not keep treating it as a
+session-local workaround. Make the fix permanent in code, launch, or docs, and
+carry that change forward everywhere it matters.
+
+- If the robot keeps doing the same bad thing after a temporary workaround, fold
+  the workaround into the repo.
+- If a fix solves the root cause, update the code path, the bench path, and the
+  docs together so the error does not come back in the next session.
+- Do not leave recurring failures as notes for manual repetition later.
 
 ### Next steps
 1. **Verify Pi–ESP32 bridge is stable** (see docs/workflow.md troubleshooting section)
@@ -83,7 +97,7 @@ SSH to Pi: `ssh ryan@mybot "..."` — prefer hostname over IP.
 
 ## Launch Sequence
 
-**Pi robot stack auto-starts at boot** via `robot-launch.service` — no manual step needed.
+**Pi robot stack auto-starts at boot** via `robot-launch.service` — bridge comes up automatically, but drive motion stays disabled until `enable_motion:=true` is used.
 If you need to restart it manually: `ssh ryan@mybot "mybot-launch"` (kills stale processes first).
 
 ```bash
@@ -625,41 +639,28 @@ if (fabsf(p.target) < 0.01f) { p.integral = 0.0f; p.prev_err = 0.0f; return 0; }
 
 Teleop validated: forward, left/right turns, and combined arc all stable. Driven via `teleop_twist_keyboard` on dev machine.
 
-### 27) OLED display subscriptions (BAT -- / AGENT OFFLINE) — DDS timing fix (2026-05-15)
+### 27) OLED display reads ESP32 battery telemetry directly (2026-05-16)
 
-**Symptom:** OLED display hardware works (shows IP, renders frames) but all data fields show `--`
-and status shows `AGENT OFFLINE`. Occurs every boot — display worked only if oled service restarted
-manually after `mybot-launch`.
+**Symptom:** OLED display needs to stay useful even when the ROS bridge is not ready.
 
-**Root cause:** DDS late-joining publisher timing. The oled service starts at boot (ExecStartPre=5s
-delay). The ESP32 connects to micro_ros_agent later (after `mybot-launch` is run). When micro_ros_agent
-creates DDS publishers for `/battery_state`, `/diff_cont/odom`, etc., the oled node's subscriptions
-were already created in a DDS universe where those publishers didn't exist. FastDDS SHM transport
-made endpoint re-negotiation fail silently for late-joining publishers from micro_ros_agent.
+**Current design:** `oled_display_node.py` now reads the ESP32 Telnet telemetry stream directly and
+parses the `[bat] 12.34V 0.123A` lines. The display no longer depends on `/battery_state` DDS
+subscriptions for battery status.
 
-**Diagnostic path:**
-1. `ros2 topic info /battery_state -v --no-daemon` → oled subscription not listed (Subscription count: 0)
-2. `ros2 topic echo /battery_state --no-daemon` (with fastdds_no_shm.xml) → received data fine
-3. Restarting oled service WHILE ESP32 was connected → callbacks fired immediately (11.50V at 116ms)
-4. Confirmed: the node matching works, but only when it starts after the publishers are live.
+**Behavior:**
+1. The Pi OLED service starts at boot.
+2. The node opens a direct Telnet connection to `esp32-mybot.local:23`.
+3. Battery voltage/current update from the ESP32 telemetry stream.
+4. The OLED shows `ESP32 ONLINE` when telemetry is fresh, `ESP32 OFFLINE` when stale.
 
-**Fix:** Self-restart on data timeout in `oled_display_node.py`. If `_battery_voltage` is still None
-after 30 seconds, calls `os._exit(1)`. Systemd (`Restart=always`, `RestartSec=5`) restarts the node.
-Repeats every ~35 s until `mybot-launch` is running and the ESP32 is connected. At that point the
-node starts with live publishers already in the DDS domain — callbacks fire within ~1 second.
-
-**What did NOT work:** forcing FastDDS UDP-only transport (`FASTRTPS_DEFAULT_PROFILES_FILE` with
-`useBuiltinTransports=false`). UDP-only profile breaks matching with micro_ros_agent because
-micro_ros_agent's DDS participants use SHM as primary transport; with no common transport the
-endpoints can't exchange data. Default SHM+UDP is required.
-
-**Confirmed working:** odom callback at 1.1s after node start, battery at 1.6s (11.43V from real ESP32).
-Display shows: `BAT 11.43V  0.30A`, `VEL 0.00m/s  0.0r/s`, `TELEOP`.
+**Failure handling:** If no ESP32 battery telemetry arrives for 30 s, the node exits so systemd can
+restart it. That gives the display a chance to reconnect cleanly if Wi-Fi or the ESP32 reboot path
+was mid-transition.
 
 **Files changed:**
-- `src/articubot_one/scripts/oled_display_node.py` — added `import os`, `DATA_TIMEOUT = 30.0`,
-  `_node_start_t`, and timeout check in `_render()` that calls `os._exit(1)`
-- `/etc/systemd/system/oled-display.service` (Pi only) — no special env vars; default FastDDS
+- `src/articubot_one/scripts/oled_display_node.py` — removed ROS topic subscriptions; added direct
+  Telnet battery reader and stale-data restart
+- `/etc/systemd/system/oled-display.service` (Pi only) — still launched at boot by systemd
 
 ### 29) ESP32 30s WAITING watchdog — esp_restart() on HWCDC reconnect failure (2026-05-15)
 
@@ -694,7 +695,7 @@ Also zeroed `waiting_start = 0` in the CONNECTED→WAITING transition so the tim
 each agent loss, not just on power-up.
 
 **Boot sequence (fully automatic):** Pi boots → robot-launch.service starts micro_ros_agent →
-ESP32 pings, finds agent, connects → display shows TELEOP within ~35 s. No manual button press.
+ESP32 pings, finds agent, connects → display shows IP, battery, age, ESP32 link, and ROS status within ~35 s. No manual button press.
 
 **Files changed:**
 - `src/esp32_microros/src/main.cpp` — added `waiting_start`, watchdog in WAITING case
@@ -814,12 +815,12 @@ of continued motion after the stop key is pressed.
    Tuning ranges: LIN_ACCEL 0.25–0.60 m/s², ANG_ACCEL 0.80–1.50 rad/s².
    Too low = sluggish feel. Too high = startup punch returns.
 
-3. **Integral preseed** on rest→move transition. The ramp's first step only produces ~5–15 PWM
-   from the P term — below motor deadband (~45 PWM). Preseed sets integral so that
-   `Kp×error + Ki×integral = START_PWM_SEED` on the first tick, starting the motor cleanly.
+3. **Integral preseed** on rest→move transition. Preseed sets integral so that
+   `Kp×error + Ki×integral = START_PWM_SEED` on the first active tick, starting the motor
+   cleanly instead of reacting to a bridge-open blip.
    ```cpp
    static constexpr float START_PWM_SEED = 55.0f;
-   // Fires only when pid.target was ~0 and new target is non-zero
+   // Fires only when pid.target was ~0 and a new target arrives
    if (fabsf(p.target) < 0.01f && fabsf(nt) > 0.01f) {
        float s = (nt > 0) ? 1.0f : -1.0f;
        p.integral = constrain(s * (START_PWM_SEED - KP * fabsf(nt)) / KI, -KI_MAX, KI_MAX);
@@ -838,6 +839,7 @@ of continued motion after the stop key is pressed.
 - VEL_ALPHA = 0.2 (do not increase — higher alpha lets more noise through)
 - LIN_ACCEL = 0.35 m/s², ANG_ACCEL = 1.10 rad/s² (felt right after iterative tuning)
 - START_PWM_SEED = 55 PWM, PWM_SLEW_PER_TICK = 8, REVERSAL_COAST_VEL = 3.0 rad/s
+- The controller now also holds the sustain floor through the first part of a fresh move.
 - CMD_TIMEOUT_MS = 1000 ms
 
 **Permanent hardware fix (not yet done):** Solder 100 nF ceramic caps from GPIO40 to GND and
@@ -953,9 +955,8 @@ from dev machine to `/cmd_vel_raw` works (uses UDP network transport, bypasses S
 **Fixes:**
 
 1. **Kd=0, Ki=5, KI_MAX=10 with preseed** — removes overshoot:
-   - Preseed sets integral on 0→nonzero target transition so first tick delivers exactly
-     `START_PWM_SEED=55` PWM regardless of ramp step size. Overcomes motor deadband (~45 PWM)
-     on first tick without the D-term spike.
+   - Preseed sets integral so the first active tick delivers roughly `START_PWM_SEED=55` PWM
+     without the D-term spike or bridge-open blips.
    - Ki=5 handles steady-state tracking error after startup.
    - Stop behavior: if robot creeps after stop, lower KI_MAX (try 5) to reduce integral windup.
 

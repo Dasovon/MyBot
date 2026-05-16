@@ -38,7 +38,7 @@ Based on the [Articulated Robotics](https://articulatedrobotics.xyz/category/bui
 | Nav2 autonomous navigation | ✅ working |
 | Intel RealSense D435 (color + depth) | ✅ working — RSUSB backend |
 | ESP32-S3 + micro-ROS (motors, IMU, battery) | ✅ working — production controller |
-| Waveshare 2.42" OLED status display | ✅ working — starts at boot via systemd |
+| Waveshare 2.42" OLED status display | ✅ working — reads battery telemetry directly from ESP32 at boot via systemd |
 | Object tracking (OpenCV) | ⬜ pending |
 
 ---
@@ -91,7 +91,7 @@ Raspberry Pi 4
   ├── micro_ros_agent       ↔ ESP32-S3 micro-ROS bridge
   ├── rplidar_composition    → /scan
   ├── realsense2_camera      → /camera/camera/{color,depth}/...
-  └── oled_display_node      → Waveshare 2.42" OLED (systemd)
+  └── oled_display_node      → Waveshare 2.42" OLED (systemd, direct ESP32 telemetry)
 
         ↕ USB serial @ 57600
 
@@ -124,6 +124,13 @@ WiFi → OTA flashing + TelnetStream monitor (port 23)
 
 Bench tuning lives in `src/esp32_microros/test/test_pid_bench` and runs without the Pi bridge.
 ```
+
+OLED layout:
+1. `IP <Pi IP>`
+2. `BAT <voltage>V <current>A`
+3. `AGE hh:mm:ss`
+4. `ESP32 ONLINE` / `ESP32 OFFLINE`
+5. `ROS UP` / `ROS DOWN`
 
 ---
 

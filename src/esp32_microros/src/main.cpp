@@ -54,6 +54,8 @@ static constexpr float KI            =   9.0f;
 static constexpr float KI_MAX        =  24.0f;
 static constexpr float START_PWM_SEED = 120.0f;  // PWM at first tick from standstill
 static constexpr float RUN_PWM_FLOOR  =  72.0f;    // keep any active command above the deadband while target is nonzero
+static constexpr float RUN_PWM_FLOOR_ACTUAL = 2.0f; // rad/s: only apply the floor while the wheel is still in the low-speed band
+static constexpr uint32_t RUN_PWM_START_HOLD_MS = 400; // sustain the floor through the first part of a fresh move
 
 
 // ── Velocity lowpass filter ───────────────────────────────────────────
@@ -64,11 +66,12 @@ static float vel_l_filt = 0.0f, vel_r_filt = 0.0f;
 
 static constexpr float REVERSAL_COAST_VEL = 3.0f;  // rad/s: coast before reversing a rolling wheel (raised from 0.8 — EMI noise on left encoder was false-triggering)
 static float cmd_lin = 0.0f, cmd_ang = 0.0f;
-static constexpr uint32_t CMD_TIMEOUT_MS = 1000;
+static constexpr uint32_t CMD_TIMEOUT_MS = 3000;
 static constexpr uint32_t ARM_ZERO_HOLD_MS = 1000;
 static uint32_t t_cmd_last  = 0;
 static bool motion_armed = false;
 static uint32_t zero_hold_start = 0;
+static uint32_t nonzero_motion_start = 0;
 
 struct PID { float target = 0.0f, prev_err = 0.0f, integral = 0.0f; };
 static PID pid_l, pid_r;
@@ -88,7 +91,11 @@ static int pid_compute(PID& p, float actual, float dt) {
     p.integral = constrain(p.integral + err * dt, -KI_MAX, KI_MAX);
     float out = KP * err + KD * (err - p.prev_err) / dt + KI * p.integral;
     p.prev_err = err;
-    if (fabsf(p.target) >= 0.01f && fabsf(out) < RUN_PWM_FLOOR) {
+    bool in_start_hold = nonzero_motion_start > 0 &&
+        (millis() - nonzero_motion_start) < RUN_PWM_START_HOLD_MS;
+    if (fabsf(p.target) >= 0.01f &&
+        (in_start_hold || fabsf(actual) < RUN_PWM_FLOOR_ACTUAL) &&
+        fabsf(out) < RUN_PWM_FLOOR) {
         out = copysignf(RUN_PWM_FLOOR, p.target);
     }
     out = constrain(out, -255.0f, 255.0f);
@@ -179,6 +186,7 @@ static void reset_motion_state() {
     t_cmd_last = 0;
     motion_armed = false;
     zero_hold_start = 0;
+    nonzero_motion_start = 0;
     motors_stop();
 }
 
@@ -188,6 +196,7 @@ static void cmd_cb(const void* msg) {
     cmd_lin = m->linear.x;
     cmd_ang = m->angular.z;
     t_cmd_last = millis();
+    log("[cmd] lin=%.3f ang=%.3f armed=%d\n", cmd_lin, cmd_ang, motion_armed ? 1 : 0);
 }
 
 // ── micro-ROS entity management ───────────────────────────────────────
@@ -369,46 +378,63 @@ void loop() {
                     } else {
                         zero_hold_start = 0;
                     }
-                } else if (!cmd_is_zero) {
+                    nonzero_motion_start = 0;
+                } else if (cmd_is_zero) {
                     zero_hold_start = 0;
+                    nonzero_motion_start = 0;
+                } else {
+                    zero_hold_start = 0;
+                    if (nonzero_motion_start == 0) {
+                        nonzero_motion_start = now;
+                        log("[esp32_robot] motion command active\n");
+                    }
                 }
 
-                // Commands arrive directly from twist_mux on the Pi; the ESP32 applies its own
-                // start preseed, timeout, and reversal-coast handling here.
-                float tl = (cmd_lin - cmd_ang * WHEEL_SEP * 0.5f) / WHEEL_RADIUS;
-                float tr = (cmd_lin + cmd_ang * WHEEL_SEP * 0.5f) / WHEEL_RADIUS;
-
-                // Preseed integral on rest→move transition so first tick delivers
-                // START_PWM_SEED PWM — overcomes motor deadband without Kd overshoot.
-                auto preseed = [&](PID& p, float nt) {
-                    if (!motion_armed) return;
-                    if (fabsf(p.target) < 0.01f && fabsf(nt) > 0.01f) {
-                        float s = (nt > 0.0f) ? 1.0f : -1.0f;
-                        p.integral = constrain(
-                            s * (START_PWM_SEED - KP * fabsf(nt)) / KI,
-                            -KI_MAX, KI_MAX);
-                    }
-                };
-                preseed(pid_l, tl);
-                preseed(pid_r, tr);
-
-                if (!motion_armed && (fabsf(tl) >= 0.01f || fabsf(tr) >= 0.01f)) {
-                    tl = 0.0f;
-                    tr = 0.0f;
+                if (!motion_armed) {
                     pid_l.target = 0.0f;
                     pid_r.target = 0.0f;
-                }
-                pid_l.target = tl;
-                pid_r.target = tr;
+                    pid_l.prev_err = 0.0f;
+                    pid_r.prev_err = 0.0f;
+                    pid_l.integral = 0.0f;
+                    pid_r.integral = 0.0f;
+                    motors_stop();
+                    if (++log_tick >= 1) {
+                        log_tick = 0;
+                        log("[enc] cnt=%ld/%ld tgt=0.00/0.00 act=%.2f/%.2f filt=%.2f/%.2f\n",
+                            l, r, vel_l, vel_r, vel_l_filt, vel_r_filt);
+                    }
+                } else {
+                    // Commands arrive directly from twist_mux on the Pi; the ESP32 applies its own
+                    // start preseed, timeout, and reversal-coast handling here.
+                    float tl = (cmd_lin - cmd_ang * WHEEL_SEP * 0.5f) / WHEEL_RADIUS;
+                    float tr = (cmd_lin + cmd_ang * WHEEL_SEP * 0.5f) / WHEEL_RADIUS;
 
-                int pwm_l = pid_compute(pid_l, vel_l_filt, dt);
-                int pwm_r = pid_compute(pid_r, vel_r_filt, dt);
-                motor_set(PWMB_CH, BIN1, BIN2, pwm_l);
-                motor_set(PWMA_CH, AIN1, AIN2, pwm_r);
-                if (++log_tick >= 1) {
-                    log_tick = 0;
-                    log("[enc] cnt=%ld/%ld tgt=%.2f/%.2f act=%.2f/%.2f filt=%.2f/%.2f\n",
-                        l, r, pid_l.target, pid_r.target, vel_l, vel_r, vel_l_filt, vel_r_filt);
+                    // Preseed integral on rest→move transition so first tick delivers
+                    // START_PWM_SEED PWM — overcomes motor deadband without Kd overshoot.
+                    auto preseed = [&](PID& p, float nt) {
+                        if (!motion_armed) return;
+                        if (fabsf(p.target) < 0.01f && fabsf(nt) > 0.01f) {
+                            float s = (nt > 0.0f) ? 1.0f : -1.0f;
+                            p.integral = constrain(
+                                s * (START_PWM_SEED - KP * fabsf(nt)) / KI,
+                                -KI_MAX, KI_MAX);
+                        }
+                    };
+                    preseed(pid_l, tl);
+                    preseed(pid_r, tr);
+
+                    pid_l.target = tl;
+                    pid_r.target = tr;
+
+                    int pwm_l = pid_compute(pid_l, vel_l_filt, dt);
+                    int pwm_r = pid_compute(pid_r, vel_r_filt, dt);
+                    motor_set(PWMB_CH, BIN1, BIN2, pwm_l);
+                    motor_set(PWMA_CH, AIN1, AIN2, pwm_r);
+                    if (++log_tick >= 1) {
+                        log_tick = 0;
+                        log("[enc] cnt=%ld/%ld tgt=%.2f/%.2f act=%.2f/%.2f filt=%.2f/%.2f\n",
+                            l, r, pid_l.target, pid_r.target, vel_l, vel_r, vel_l_filt, vel_r_filt);
+                    }
                 }
 
                 float dist_l = (float)dl * COUNTS_TO_RAD * WHEEL_RADIUS;
@@ -477,5 +503,18 @@ void loop() {
                 }
             }
             break;
+    }
+
+    // Battery @ 1 Hz is always available over Telnet, even when the ROS bridge is down.
+    if (now - t_battery >= 1000) {
+        t_battery = now;
+        float v   = ina.getBusVoltage_V();
+        float i_A = ina.getCurrent_mA() * 0.001f;
+        bat_msg.voltage = v;
+        bat_msg.current = i_A;
+        if (state == CONNECTED) {
+            rcl_publish(&pub_bat, &bat_msg, NULL);
+        }
+        log("[bat] %.2fV  %.3fA\n", v, i_A);
     }
 }

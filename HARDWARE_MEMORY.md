@@ -352,16 +352,24 @@ Memory addressing: **page mode** (`0x20 0x02`) — must match `_show()` which us
 3. **Display warmup** — send `0xA5` (all pixels ON) for 1s then `0xA4` (resume GDDRAM) to stabilize.
 
 **Node:** `oled_display_node.py`
-- Subscribes: `/battery_state`, `/diff_cont/odom`, `/odom`, `/navigate_to_pose/_action/status`
-- Renders at 2Hz: IP address, battery V/A, velocity m/s + r/s, EKF pose x/y/yaw, nav status
+- Reads battery telemetry directly from the ESP32 Telnet stream at `esp32-mybot.local:23`
+- Renders at 2Hz: IP, battery V/A, telemetry age, ESP32 link status, ROS status
 - IP via UDP socket trick (not `gethostbyname` — returns 127.0.1.1 on Ubuntu 22.04)
-- Status line: AGENT OFFLINE / TELEOP / IDLE / NAVIGATING / GOAL REACHED
+- Status line: `ESP32 ONLINE` / `ESP32 OFFLINE`
+- ROS line: `ROS UP` / `ROS DOWN`
 
 **Systemd service:** `/etc/systemd/system/oled-display.service` (Pi only, not in git)
 - `User=ryan` — requires ryan to be in gpio/spi/dialout groups (see above)
-- `ExecStartPre=/bin/sleep 5` — wait for SPI subsystem to be ready
+- `Wants=network-online.target` / `After=network-online.target` — start as soon as networking is ready
 - `Restart=always RestartSec=5`
 - NOT in `launch_robot.launch.py` — systemd handles it independently
+
+**Current OLED layout:**
+1. `IP <Pi IP>`
+2. `BAT <voltage>V  <current>A`
+3. `AGE hh:mm:ss`
+4. `ESP32 ONLINE` / `ESP32 OFFLINE`
+5. `ROS UP` / `ROS DOWN`
 
 ```bash
 sudo systemctl status oled-display

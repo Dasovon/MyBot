@@ -34,6 +34,8 @@ pattern. I added a sustain-floor in the motor controller, raised the test log
 rate, and added adaptive rotation targets so the run can extend from 1 to 3
 revolutions when the wheel stays in motion. The latest rerun reached a full
 rotation again, so the next step is to tighten smoothness before longer tests.
+The current controller also holds the sustain floor through the first part of a
+fresh move, so the bridge opening should not kick the wheels immediately.
 
 For the exact Claude Code CLI task script, see
 [claude_code_pid_test_instructions.md](./claude_code_pid_test_instructions.md).
@@ -69,6 +71,9 @@ For Pi-to-ESP32 communication checks, use the same Python runner with
 `--profile bridge`. It logs the same battery, odom, IMU, encoder, and command
 fields, but the command sequence is shorter and focuses on command delivery,
 stop recovery, and boot-zero behavior rather than gain tuning.
+The bridge profile starts with forward motion, then stop, reverse, stop, turn,
+stop so the preflight can prove the ESP32 logged a received command before the
+rest of the sequence runs.
 
 ---
 
@@ -151,8 +156,11 @@ static constexpr float KI_MAX = 10.0f;  // Ki × KI_MAX = max integral contribut
 - Startup deadband (integral winds up until it overcomes friction)
 
 **Preseed**: when target transitions from 0 to non-zero, integral is preset so
-the first PID update lands near `START_PWM_SEED` PWM. This ensures the motor
-starts immediately without waiting for integral to wind up.
+the first active PID update lands near `START_PWM_SEED` PWM. This gives the
+motor a clean start without waiting for integral to wind up.
+The controller now also holds the sustain floor through the first part of a
+fresh move, so the output does not collapse back under the deadband as soon as
+the wheel begins to spin.
 
 ```cpp
 static constexpr float START_PWM_SEED = 55.0f;  // first-tick PWM (above ~45 deadband)
@@ -233,8 +241,9 @@ REVERSAL_COAST_VEL = 3.0f  // rad/s
 CMD_TIMEOUT_MS     = 1000  // ms
 ```
 
-Pi-side smoother: none in current deployment. If you add one later, keep its limits
-consistent with the ESP32 firmware and retune from scratch.
+Pi-side smoother: `vel_smoother.py` is in the current launch path for integration
+runs. Keep its limits consistent with the ESP32 firmware and retune from scratch
+if you change either side.
 
 ### Stop-feel tuning
 

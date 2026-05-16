@@ -24,6 +24,8 @@ but the motion is still bursty:
 - the wheel advanced, but velocity repeatedly fell back toward zero
 
 That means the next task is motion smoothness, not more count chasing.
+The ESP32 controller now keeps the sustain floor active through the first part
+of a fresh move so the wheel does not fall back into deadband at bridge open.
 
 ## Current State
 
@@ -83,6 +85,12 @@ Use the bench log output and graph these fields:
 The key question is whether velocity ramps up and down smoothly while the wheel
 is actually moving, not just whether counts eventually reach the target.
 
+For the bridge profile, the first success criterion is simpler: while the system
+is held at zero, the ESP32 must log at least one received command. That proves
+the Pi-to-ESP32 path is alive before motion begins.
+The reported `bridge_cmd_max_gap_s` is measured after the first nonzero command
+so it reflects the active bridge stream, not the intentional startup zero hold.
+
 When analyzing the log, watch for:
 
 - how many separate nonzero velocity bursts appear
@@ -97,6 +105,7 @@ When analyzing the log, watch for:
   down cleanly when the command ends.
 - The run can extend from 1 to 3 revolutions without stalling or snapping back
   into the deadband.
+- The bridge profile logs a received command at zero before the first motion step.
 
 ## What To Fix If It Still Pulses
 

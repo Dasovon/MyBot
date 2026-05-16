@@ -35,6 +35,9 @@ ENC_LINE_RE = re.compile(
     r"act=(?P<act_l>-?\d+(?:\.\d+)?)/(?P<act_r>-?\d+(?:\.\d+)?)\s+"
     r"filt=(?P<filt_l>-?\d+(?:\.\d+)?)/(?P<filt_r>-?\d+(?:\.\d+)?)"
 )
+CMD_LINE_RE = re.compile(
+    r"\[cmd\]\s+lin=(?P<lin>-?\d+(?:\.\d+)?)\s+ang=(?P<ang>-?\d+(?:\.\d+)?)\s+armed=(?P<armed>[01])"
+)
 
 ARM_SECONDS = 2.0
 
@@ -112,13 +115,19 @@ def parse_step(token: str, default_duration: float, stop_hold: float) -> Step:
 def build_profile(name: str, duration: float, stop_hold: float) -> list[Step]:
     if name == "bridge":
         return [
-            parse_step("k", 1.0, 1.0),
             parse_step("i", duration, stop_hold),
             parse_step("k", 1.0, 1.0),
             parse_step(",", duration, stop_hold),
             parse_step("k", 1.0, 1.0),
             parse_step("j", duration, stop_hold),
             parse_step("k", 1.0, 1.0),
+        ]
+    if name == "smooth":
+        # One sustained forward command followed by a full stop window so we can
+        # measure startup, hold, and decay without stop-go command chopping.
+        return [
+            parse_step("i", duration, stop_hold),
+            parse_step("k", max(2.0, stop_hold), max(2.0, stop_hold)),
         ]
     if name == "rebound":
         return [
@@ -188,6 +197,12 @@ class DriveSequenceRunner(Node):
         self.interrupted = False
         self._preflight_started_at = None
         self._preflight_tgt_seen = False
+        self._bridge_enc_seen = False
+        self._bridge_cmd_seen = False
+        self._bridge_cmd_count = 0
+        self._bridge_cmd_last_t = None
+        self._bridge_cmd_max_gap = 0.0
+        self._bridge_cmd_track_active = False
 
         self.latest_battery = None
         self.latest_imu = None
@@ -234,6 +249,8 @@ class DriveSequenceRunner(Node):
             "max_abs_enc_cnt_l": 0,
             "max_abs_enc_cnt_r": 0,
             "turn_goal_cnt": 0,
+            "bridge_cmd_count": 0,
+            "bridge_cmd_max_gap_s": 0.0,
         }
         self._enc_thread = threading.Thread(target=self._enc_monitor_loop, daemon=True)
         self._enc_thread.start()
@@ -327,6 +344,7 @@ class DriveSequenceRunner(Node):
     def _update_encoder_sample(self, sample):
         with self._state_lock:
             self.latest_enc = sample
+            self._bridge_enc_seen = True
             if sample.get("cnt_l") is not None and sample.get("cnt_r") is not None:
                 self.latest_enc_counts = sample
                 self.summary["max_abs_enc_cnt_l"] = max(self.summary["max_abs_enc_cnt_l"], abs(int(sample["cnt_l"])))
@@ -336,6 +354,21 @@ class DriveSequenceRunner(Node):
                 self.summary["max_abs_enc_act_r"] = max(self.summary["max_abs_enc_act_r"], abs(sample["act_r"]))
                 self.summary["max_abs_enc_filt_l"] = max(self.summary["max_abs_enc_filt_l"], abs(sample["filt_l"]))
                 self.summary["max_abs_enc_filt_r"] = max(self.summary["max_abs_enc_filt_r"], abs(sample["filt_r"]))
+
+    def _update_cmd_sample(self, sample):
+        with self._state_lock:
+            self._bridge_cmd_seen = True
+            now = time.monotonic()
+            is_nonzero = abs(float(sample.get("lin", 0.0))) > 0.001 or abs(float(sample.get("ang", 0.0))) > 0.001
+            self._bridge_cmd_count += 1
+            if self.args.profile == "bridge" and not self._bridge_cmd_track_active:
+                if is_nonzero:
+                    self._bridge_cmd_track_active = True
+                    self._bridge_cmd_last_t = now
+                return
+            if self._bridge_cmd_last_t is not None:
+                self._bridge_cmd_max_gap = max(self._bridge_cmd_max_gap, now - self._bridge_cmd_last_t)
+            self._bridge_cmd_last_t = now
 
     def _turn_motion_alive(self, enc):
         if not enc:
@@ -375,6 +408,15 @@ class DriveSequenceRunner(Node):
                             line, buffer = buffer.split("\n", 1)
                             match = ENC_LINE_RE.search(line)
                             if not match:
+                                cmd_match = CMD_LINE_RE.search(line)
+                                if cmd_match:
+                                    self._update_cmd_sample(
+                                        {
+                                            "lin": float(cmd_match.group("lin")),
+                                            "ang": float(cmd_match.group("ang")),
+                                            "armed": int(cmd_match.group("armed")),
+                                        }
+                                    )
                                 continue
                             self._update_encoder_sample(
                                 {
@@ -412,6 +454,19 @@ class DriveSequenceRunner(Node):
             elapsed = now - self._preflight_started_at
             with self._state_lock:
                 enc = self.latest_enc or {}
+                bridge_enc_seen = self._bridge_enc_seen
+                bridge_cmd_seen = self._bridge_cmd_seen
+            if self.args.profile == "bridge":
+                if self._bridge_cmd_count >= 2:
+                    return True
+                if elapsed > 5.0:
+                    self.get_logger().error(
+                        "[PREFLIGHT FAILED] ESP32 did not log a steady command stream while "
+                        "the bridge was publishing zero. The Pi-to-ESP32 path is not fully alive."
+                    )
+                    self.done = True
+                    return True
+                return False
             if enc:
                 tgt_l = abs(float(enc.get("tgt_l", 0.0)))
                 expected = (self.steps[0].linear / WHEEL_RADIUS) if self.steps else 0.0
@@ -540,6 +595,8 @@ class DriveSequenceRunner(Node):
         self.summary["max_abs_cmd_wheel_l"] = max(self.summary["max_abs_cmd_wheel_l"], abs(cmd_wheel_l))
         self.summary["max_abs_cmd_wheel_r"] = max(self.summary["max_abs_cmd_wheel_r"], abs(cmd_wheel_r))
         self.summary["turn_goal_cnt"] = self._turn_goal_counts
+        self.summary["bridge_cmd_count"] = self._bridge_cmd_count
+        self.summary["bridge_cmd_max_gap_s"] = self._bridge_cmd_max_gap
 
         battery_v = current_a = ""
         power_w = ""
@@ -610,7 +667,7 @@ class DriveSequenceRunner(Node):
         parser.add_argument(
             "--profile",
             default="rebound",
-            choices=["bridge", "rebound", "power", "straight", "turns", "one_turn"],
+            choices=["bridge", "smooth", "rebound", "power", "straight", "turns", "one_turn"],
             help="predefined teleop-style sequence",
         )
         parser.add_argument(
@@ -628,7 +685,7 @@ class DriveSequenceRunner(Node):
         )
         parser.add_argument(
             "--encoder-host",
-            default="esp32-mybot.local",
+            default="192.168.86.43",
             help="host serving the ESP32 telnet encoder stream",
         )
         parser.add_argument(
@@ -742,6 +799,8 @@ def main():
             f"enc_max|cnt|={summary['max_abs_enc_cnt_l']}/{summary['max_abs_enc_cnt_r']} "
             f"enc_max|act|={summary['max_abs_enc_act_l']:.3f}/{summary['max_abs_enc_act_r']:.3f} "
             f"turn_goal_cnt={summary['turn_goal_cnt']} "
+            f"bridge_cmd_count={summary['bridge_cmd_count']} "
+            f"bridge_cmd_max_gap_s={summary['bridge_cmd_max_gap_s']:.3f} "
             f"enc_ratio={enc_ratio_l_str}/{enc_ratio_r_str}",
             flush=True,
         )

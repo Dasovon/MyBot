@@ -279,13 +279,13 @@ Paste:
 ```ini
 [Unit]
 Description=OLED Display Node
-After=network.target
+Wants=network-online.target
+After=network-online.target
 
 [Service]
 Type=simple
 User=ryan
 Environment="PYTHONUNBUFFERED=1"
-ExecStartPre=/bin/sleep 5
 ExecStart=/bin/bash -c "source /opt/ros/humble/setup.bash && source /home/ryan/mybot_ws/install/setup.bash && ros2 run articubot_one oled_display_node.py"
 Restart=always
 RestartSec=5
@@ -294,7 +294,7 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-`ExecStartPre=/bin/sleep 5` is required — gives the SPI subsystem time to be ready before the node starts.
+The OLED service starts with the network and retries until the ESP32 feed is available.
 
 `Restart=always` / `RestartSec=5` work together with the 30-second data timeout built into the node:
 if no ESP32 data arrives, the node exits and systemd restarts it. Repeat until `mybot-launch` is running.
@@ -316,8 +316,9 @@ journalctl -u oled-display -f
 
 ## 16. Robot Stack Auto-Launch Service
 
-This service starts `micro_ros_agent` and the full sensor stack automatically at boot — no manual
-`mybot-launch` needed. Create it after the robot stack is working correctly with `mybot-launch`.
+This service starts `micro_ros_agent` automatically at boot — no manual `mybot-launch` needed.
+Camera and lidar are opt-in launch arguments now, and motion is opt-in via `enable_motion:=true`, so unplugged hardware
+does not take down the stack and the robot will not drive at boot. Create it after the robot stack is working correctly with `mybot-launch`.
 The service now targets the stable ESP32 USB by-id path, not a hardcoded `/dev/ttyACM0`.
 
 ```bash
@@ -360,12 +361,22 @@ journalctl -u robot-launch -f
 ```
 
 **Boot sequence (fully automatic):**
-1. Pi boots → `robot-launch.service` starts (5 s delay) → `micro_ros_agent` listening on the ESP32 USB by-id path
-2. `oled-display.service` starts (5 s delay) → begins 30 s restart cycle
+1. Pi boots → `robot-launch.service` starts `micro_ros_agent` on the ESP32 USB by-id path
+2. `oled-display.service` starts on `network-online.target` → reads battery telemetry directly from the ESP32 Telnet stream
 3. ESP32 boots → pings for 30 s → resets via watchdog if no agent → on next boot finds agent → connects
-4. Display shows `BAT / VEL / TELEOP` within ~35 s of ESP32 connecting
+4. Display shows `IP`, `BAT`, `AGE`, `ESP32 ONLINE/OFFLINE`, and `ROS UP/DOWN` once telemetry is available; motion remains disabled until `enable_motion:=true` is used
 
 No manual intervention needed after power-on.
+
+### Display layout
+
+The OLED is intentionally compact and ordered top-to-bottom as:
+
+1. `IP <Pi IP>`
+2. `BAT <voltage>V <current>A`
+3. `AGE hh:mm:ss`
+4. `ESP32 ONLINE` / `ESP32 OFFLINE`
+5. `ROS UP` / `ROS DOWN`
 
 ---
 
@@ -392,13 +403,16 @@ ls /dev/spidev*
 ls /dev/rplidar /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:5C:23:1C-if00
 ```
 
-### Launch robot stack (without lidar/camera connected — they crash gracefully)
+### Launch robot stack
 ```bash
 mybot-launch
 ```
 
 Expected output: micro_ros_agent connects, `/diff_cont/odom`, `/imu/imu`, `/battery_state` publishing.
+Motion is off by default; to drive, pass `enable_motion:=true` to the launch file.
 For low-level motor tuning, use the ESP32 bench firmware in `src/esp32_microros/test/test_pid_bench`; keep that off the Pi bridge.
+To enable sensors when they are physically connected, pass `enable_lidar:=true enable_camera:=true` to the launch file.
+The OLED status display reads battery telemetry directly from the ESP32 Telnet stream, so it can stay useful even when the ROS bridge is not active.
 
 ### Check OLED service
 ```bash
@@ -472,16 +486,14 @@ which only work in page mode.
 ### SPI device not found (`/dev/spidev0.0` missing)
 SPI not enabled. Check `/boot/firmware/config.txt` for `dtparam=spi=on`, reboot.
 
-### Display shows BAT -- / AGENT OFFLINE after boot (data never arrives)
-DDS late-joining timing issue. The oled service starts at boot; the ESP32 connects to micro_ros_agent
-later (after `mybot-launch`). When `micro_ros_agent` creates its DDS publishers for `/battery_state`
-and `/diff_cont/odom`, the oled node's subscriptions fail to match them if the node started before
-the publishers existed.
+### Display shows STARTING or ESP32 OFFLINE
+The display no longer depends on DDS. It reads battery telemetry directly from the ESP32 Telnet
+stream, so the only reasons it should show `STARTING` or `ESP32 OFFLINE` are: the ESP32 is not
+powered, Wi-Fi has not come up, or the Telnet telemetry stream has gone stale.
 
-**Self-healing fix (built into `oled_display_node.py`):** if no battery data is received within 30 s,
-the node calls `os._exit(1)`. Systemd (`Restart=always`, `RestartSec=5`) restarts it. The cycle
-repeats every ~35 s until the robot stack is running and the ESP32 is connected. At that point the
-node starts, finds live publishers immediately, and stays up.
+**Self-healing fix (built into `oled_display_node.py`):** if no ESP32 battery telemetry is received
+within 30 s, the node calls `os._exit(1)`. Systemd (`Restart=always`, `RestartSec=5`) restarts it.
+The cycle repeats until the ESP32 telemetry stream is available again.
 
 **No action needed** — this is automatic. Just boot the Pi, then run `mybot-launch` as normal. The
 oled node will show data within 35 s of the ESP32 connecting.

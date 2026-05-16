@@ -12,13 +12,14 @@ Claude Code runs on dev. It reaches the Pi via `ssh ryan@mybot "..."`.
 | Component | Machine | Launch |
 |---|---|---|
 | micro_ros_agent (ESP32 bridge) | Pi | `robot-launch.service` / `mybot-launch` |
-| RPLidar, RealSense | Pi | `robot-launch.service` / `mybot-launch` |
+| RPLidar, RealSense | Pi | optional launch args in `launch_robot.launch.py` |
 | EKF (robot_localization) | Dev | `dev_launch.py` |
 | Nav2 (AMCL, planner, controller) | Dev | `navigation_launch.py` |
 | RViz2 | Dev | `rviz2` |
 
 > BNO055 IMU and INA219 are handled entirely by the ESP32-S3 over micro-ROS — no Pi-side sensor nodes needed.
 > Current Pi launch path is `twist_mux -> /cmd_vel_raw -> vel_smoother.py -> /diff_cont/cmd_vel_unstamped`.
+> Camera and lidar are opt-in launch args so unplugged hardware does not take down the robot stack.
 > Low-level PID tuning runs on the ESP32 bench firmware in `src/esp32_microros/test/test_pid_bench`; the dev machine captures the logs.
 
 ### Full launch sequence
@@ -92,6 +93,19 @@ of vel_smoother starting. If it doesn't:
 
 1. Check `ros2 topic echo /diff_cont/cmd_vel_unstamped` — if it shows nothing, the bridge is stuck (scenario A above).
 2. Check `ros2 topic info /diff_cont/cmd_vel_unstamped` — if ESP32 subscription is listed, bridge is ok; if missing, micro_ros_agent hasn't connected.
+
+### Recurring Failure Policy
+
+If the same failure keeps returning, promote the fix into the repo instead of
+leaving it as a manual workaround.
+
+- Update code when the root cause is code-level.
+- Update launch or service config when the failure depends on startup order or
+  process ownership.
+- Update `CLAUDE.md` and the relevant docs in the same change so the next session
+  starts from the fixed state.
+- Do not keep repeating the same stopgap in chat; once a fix is real, make it
+  permanent.
 
 **Before rebooting the Pi, always stop dev-side ROS nodes:**
 ```bash
@@ -172,7 +186,7 @@ Memory files live at:
 
 ## ESP32-S3 micro-ROS Stack (production)
 
-ESP32-S3 handles motors, encoders, BNO055 IMU, and INA219 power monitor. Pi runs `micro_ros_agent` as the bridge for integration runs. EKF, Nav2, AMCL are unchanged and run on dev.
+ESP32-S3 handles motors, encoders, BNO055 IMU, and INA219 power monitor. Pi runs `micro_ros_agent` as the bridge for integration runs; motion is opt-in and stays disabled on boot unless `enable_motion:=true` is passed. The OLED service reads battery telemetry directly from the ESP32 Telnet stream and does not depend on the ROS battery topic. EKF, Nav2, AMCL are unchanged and run on dev.
 
 **`mybot-launch` already starts the agent.** To run it manually on Pi:
 ```bash
