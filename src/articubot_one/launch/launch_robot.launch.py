@@ -25,6 +25,9 @@ def generate_launch_description():
                 )]), launch_arguments={'use_sim_time': 'false', 'use_ros2_control': 'true'}.items()
     )
 
+    # twist_mux uses UDP-only FastDDS to avoid SHM discovery failure with vel_smoother.
+    # vel_smoother and micro_ros_agent use default FastDDS (SHM+UDP) so they communicate
+    # via SHM on the same Pi without breaking the micro_ros_agent bridge.
     _no_shm_env = {'FASTRTPS_DEFAULT_PROFILES_FILE': '/home/ryan/fastdds_no_shm.xml'}
 
     twist_mux_params = os.path.join(get_package_share_directory(package_name), 'config', 'twist_mux.yaml')
@@ -43,7 +46,6 @@ def generate_launch_description():
         package='articubot_one',
         executable='vel_smoother.py',
         parameters=[{'linear_accel': 0.5, 'angular_accel': 1.0, 'freq': 50.0}],
-        additional_env=_no_shm_env,
         condition=IfCondition(enable_motion),
     )
 
