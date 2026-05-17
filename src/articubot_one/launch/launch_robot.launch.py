@@ -46,6 +46,7 @@ def generate_launch_description():
         package='articubot_one',
         executable='vel_smoother.py',
         parameters=[{'linear_accel': 0.5, 'angular_accel': 1.0, 'freq': 50.0}],
+        additional_env=_no_shm_env,
         condition=IfCondition(enable_motion),
     )
 
