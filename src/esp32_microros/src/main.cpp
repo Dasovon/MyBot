@@ -477,15 +477,12 @@ void loop() {
                 rcl_publish(&pub_imu, &imu_msg, NULL);
             }
 
-            // Ping keep-alive every 2 s. Short timeout: runs while motors may be
-            // active, so a long ping stalls PID, odom, cmd processing, and OTA.
+            // Ping keep-alive every 2 s. 500ms/1 attempt: tolerant of floor-load
+            // serial jitter without blocking PID for too long on a real loss.
             if (now - t_ping >= 2000) {
                 t_ping = now;
-                if (rmw_uros_ping_agent(200, 1) != RMW_RET_OK) {
-                    pid_l.target = 0.0f; pid_r.target = 0.0f;
-                    motion_armed = false;
-                    zero_hold_start = 0;
-                    motors_stop();
+                if (rmw_uros_ping_agent(500, 1) != RMW_RET_OK) {
+                    reset_motion_state();
                     destroy_entities();
                     state = WAITING;
                     waiting_start = 0;
