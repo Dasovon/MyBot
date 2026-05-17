@@ -297,7 +297,7 @@ class OledDisplay:
                 return int(draw.textlength(text, font=font))
 
             # Row 1: battery icon + voltage left, current right (11pt, centred in 16px row)
-            self._draw_battery_icon(draw, 4, 4, battery_v)
+            self._draw_battery_icon(draw, 4, 2, battery_v)
             draw.text((31, 2),                             bat_voltage,  font=fb, fill=0)
             draw.text((122 - rw(current_text, fb), 2),    current_text, font=fb, fill=0)
 
