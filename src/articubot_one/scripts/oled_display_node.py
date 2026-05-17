@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import math
 import os
 import re
 import socket
@@ -8,8 +7,6 @@ import telnetlib
 import threading
 import time
 
-FONT_PATH = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
-FONT_SIZE = 10
 DC_PIN = 25
 RST_PIN = 27
 WIDTH = 128
@@ -27,6 +24,8 @@ try:
     import spidev
     import RPi.GPIO as GPIO
     from PIL import Image, ImageDraw, ImageFont
+    from org01_font import draw_text as org_draw_text
+    from org01_font import text_width as org_text_width
     DISPLAY_AVAILABLE = True
 except ImportError:
     DISPLAY_AVAILABLE = False
@@ -109,7 +108,6 @@ class BatteryFeed:
 class OledDisplay:
     def __init__(self):
         self._spi = None
-        self._font = None
         self._feed = BatteryFeed(ESP32_HOST, ESP32_PORT)
         self._node_start_t = time.monotonic()
         self._init_display()
@@ -181,7 +179,6 @@ class OledDisplay:
             time.sleep(1.0)
             self._cmd(0xA4)
 
-            self._font = ImageFont.truetype(FONT_PATH, FONT_SIZE)
             print('[oled_display] Display init OK', flush=True)
         except Exception as e:
             print(f'[oled_display] Display init failed: {e}', flush=True)
@@ -204,23 +201,39 @@ class OledDisplay:
                 row.append(~byte & 0xFF)
             self._spi.writebytes(row)
 
-    def _status_line(self, battery_voltage, battery_age_s, connected):
-        if battery_voltage is None:
-            if (time.monotonic() - self._node_start_t) > DATA_TIMEOUT:
-                return 'ESP32 OFFLINE'
-            return 'STARTING'
-        if battery_age_s <= STALE_STATUS_S:
-            return 'ESP32 ONLINE'
-        if connected:
-            return 'ESP32 ONLINE'
-        return 'ESP32 OFFLINE'
-
-    def _format_age(self, age_s):
+    def _format_uptime(self, age_s):
         total = max(0, int(age_s))
         hours = total // 3600
         minutes = (total % 3600) // 60
         seconds = total % 60
-        return f'{hours:02d}:{minutes:02d}:{seconds:02d}'
+        if hours:
+            return f'{hours:d}:{minutes:02d}:{seconds:02d}'
+        return f'{minutes:02d}:{seconds:02d}'
+
+    def _text_width(self, text):
+        return org_text_width(text)
+
+    def _draw_battery_icon(self, draw, x, y, voltage):
+        if voltage is None:
+            bars = 0
+        else:
+            bars = int(round((voltage - 9.0) / (12.6 - 9.0) * 4.0))
+        bars = max(0, min(4, bars))
+
+        body_w = 22
+        body_h = 10
+        tip_w = 2
+        tip_h = 4
+        draw.rectangle((x, y, x + body_w - 1, y + body_h - 1), outline=0, fill=1)
+        draw.rectangle((x + body_w, y + 2, x + body_w + tip_w - 1, y + 2 + tip_h), outline=0, fill=1)
+
+        inner_h = body_h - 4
+        for idx in range(4):
+            bx = x + 2 + idx * 4
+            if idx < bars:
+                draw.rectangle((bx, y + 2, bx + 2, y + 1 + inner_h), fill=0)
+            else:
+                draw.rectangle((bx, y + 2, bx + 2, y + 1 + inner_h), outline=0, fill=1)
 
     def _ros_status(self):
         try:
@@ -231,9 +244,18 @@ class OledDisplay:
                 timeout=1.0,
                 check=False,
             )
-            return 'ROS UP' if result.stdout.strip() == 'active' else 'ROS DOWN'
+            return 'ROS OK' if result.stdout.strip() == 'active' else 'ROS OFF'
         except Exception:
-            return 'ROS DOWN'
+            return 'ROS OFF'
+
+    def _esp_status(self, connected, battery_voltage, battery_age_s):
+        if battery_voltage is None:
+            if (time.monotonic() - self._node_start_t) > DATA_TIMEOUT:
+                return 'ESP OFF'
+            return 'START'
+        if battery_age_s <= STALE_STATUS_S or connected:
+            return 'ESP OK'
+        return 'ESP OFF'
 
     def render_loop(self):
         while True:
@@ -253,21 +275,40 @@ class OledDisplay:
             except Exception:
                 ip = '?.?.?.?'
 
-            bat = (f'{battery_v:.1f}V  {battery_a:.2f}A'
-                   if battery_v is not None else '--')
-            esp32_status = self._status_line(battery_v, battery_age_s, connected)
+            bat_voltage = f'{battery_v:.1f}V' if battery_v is not None else '--'
+            current_text = f'{battery_a:.2f}A' if battery_v is not None else '--'
+            esp_status = self._esp_status(connected, battery_v, battery_age_s)
             ros_status = self._ros_status()
-            age_text = self._format_age(link_age_s)
+            uptime_text = self._format_uptime(link_age_s)
 
             img = Image.new('1', (WIDTH, HEIGHT), 1)
             draw = ImageDraw.Draw(img)
-            f = self._font
 
-            draw.text((4, 0), f'IP {ip}', font=f, fill=0)
-            draw.text((4, 12), f'BAT {bat}', font=f, fill=0)
-            draw.text((4, 24), f'AGE {age_text}', font=f, fill=0)
-            draw.text((4, 36), esp32_status, font=f, fill=0)
-            draw.text((4, 48), ros_status, font=f, fill=0)
+            draw.rectangle((0, 0, WIDTH - 1, HEIGHT - 1), outline=0, fill=1)
+            draw.line((0, 16, WIDTH - 1, 16), fill=0)
+            draw.line((0, 32, WIDTH - 1, 32), fill=0)
+            draw.line((0, 48, WIDTH - 1, 48), fill=0)
+
+            # Row 1: battery icon on the left, voltage center-left, current right
+            self._draw_battery_icon(draw, 4, 4, battery_v)
+            org_draw_text(draw, 31, 4, bat_voltage, fill=0)
+            cur_w = self._text_width(current_text)
+            org_draw_text(draw, WIDTH - 3 - cur_w, 4, current_text, fill=0)
+
+            # Row 2: IP label on the left, IP address to the right
+            org_draw_text(draw, 3, 20, 'IP', fill=0)
+            ip_w = self._text_width(ip)
+            org_draw_text(draw, WIDTH - 3 - ip_w, 20, ip, fill=0)
+
+            # Row 3: ROS status left, ESP status right
+            org_draw_text(draw, 3, 36, ros_status, fill=0)
+            esp_w = self._text_width(esp_status)
+            org_draw_text(draw, WIDTH - 3 - esp_w, 36, esp_status, fill=0)
+
+            # Row 4: UPTIME left, uptime value right
+            org_draw_text(draw, 3, 52, 'UPTIME', fill=0)
+            up_w = self._text_width(uptime_text)
+            org_draw_text(draw, WIDTH - 3 - up_w, 52, uptime_text, fill=0)
 
             try:
                 self._show(img)

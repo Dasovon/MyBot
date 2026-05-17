@@ -125,12 +125,14 @@ WiFi → OTA flashing + TelnetStream monitor (port 23)
 Bench tuning lives in `src/esp32_microros/test/test_pid_bench` and runs without the Pi bridge.
 ```
 
-OLED layout:
-1. `IP <Pi IP>`
-2. `BAT <voltage>V <current>A`
-3. `AGE hh:mm:ss` link uptime since the current ESP32 telemetry session started
-4. `ESP32 ONLINE` / `ESP32 OFFLINE`
-5. `ROS UP` / `ROS DOWN`
+OLED layout is still being tuned:
+1. `<Pi IP>`
+2. `<voltage>V  <current>A`
+3. `ROS OK  ESP OK`
+4. `UPTIME mm:ss` or `h:mm:ss`
+
+The data path is direct from the ESP32 Telnet feed; the remaining work is
+mostly layout polish and the Pi-to-ESP32 bridge reliability path.
 
 ---
 

@@ -373,11 +373,13 @@ No manual intervention needed after power-on.
 
 The OLED is intentionally compact and ordered top-to-bottom as:
 
-1. `IP <Pi IP>`
-2. `BAT <voltage>V <current>A`
-3. `AGE hh:mm:ss` link uptime since the current ESP32 telemetry session started
-4. `ESP32 ONLINE` / `ESP32 OFFLINE`
-5. `ROS UP` / `ROS DOWN`
+1. `<Pi IP>`
+2. `<voltage>V  <current>A`
+3. `ROS OK  ESP OK`
+4. `UPTIME mm:ss` or `h:mm:ss`
+
+This layout is still being tuned. The battery feed is correct and direct from
+the ESP32, but spacing and icon sizing may still change.
 
 ---
 

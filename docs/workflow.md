@@ -22,6 +22,8 @@ Claude Code runs on dev. It reaches the Pi via `ssh ryan@mybot "..."`.
 > Camera and lidar are opt-in launch args so unplugged hardware does not take down the robot stack.
 > Motion tests require `enable_motion:=true`; otherwise the launch file keeps the drive path disabled and the bridge runner will time out at zero.
 > Low-level PID tuning runs on the ESP32 bench firmware in `src/esp32_microros/test/test_pid_bench`; the dev machine captures the logs.
+> The OLED battery path is direct from the ESP32, but the display layout is still being refined.
+> The Pi-to-ESP32 communication path still has open cleanup work; keep that separate from OLED layout work.
 
 ### Full launch sequence
 

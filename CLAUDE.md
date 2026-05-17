@@ -36,12 +36,13 @@ ROS 2 Humble differential drive robot. RPi 4 + ESP32-S3 (production stack — Ar
   - Bench sequence: PID rotation run, then power sweep, then stop
   - Low-level tuning no longer depends on the Pi bridge
   - Use the dev machine to capture the ESP32 telnet log for graphs
-- **Waveshare 2.42" OLED display** ✅ FULLY WORKING (2026-05-15):
+- **Waveshare 2.42" OLED display** ✅ DATA PATH WORKING, LAYOUT STILL BEING TUNED:
   - `oled-display.service` ENABLED, running as `ryan`, survives cold power cycle
   - Shows: IP, battery V/A, telemetry age, `ESP32 ONLINE/OFFLINE`, and `ROS UP/DOWN`
   - Reads battery telemetry directly from the ESP32 Telnet stream; it no longer depends on DDS battery subscriptions
   - Root cause of "dark display": RPi.GPIO requires gpio/spi groups (fix #25 below)
   - Root cause of "BAT -- / AGENT OFFLINE": the old DDS-based OLED data path; OLED now reads ESP32 telemetry directly
+  - Final font/spacing/layout is still under review
   - Service uses default FastDDS (SHM+UDP); self-restart loop in node handles timing
 - **Fully automatic boot** ✅ (2026-05-15):
   - `robot-launch.service` ENABLED — starts micro_ros_agent + sensor stack at boot

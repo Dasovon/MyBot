@@ -12,3 +12,7 @@ Current OLED behavior:
 - starts at boot as `oled-display.service`
 - reads battery telemetry directly from the ESP32 Telnet stream
 - displays `IP`, `BAT`, `AGE` link uptime, `ESP32 ONLINE/OFFLINE`, and `ROS UP/DOWN`
+
+Layout note:
+- the data path is stable, but the final font size, spacing, and icon sizing are
+  still being tuned

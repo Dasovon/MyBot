@@ -357,6 +357,8 @@ Memory addressing: **page mode** (`0x20 0x02`) — must match `_show()` which us
 - IP via UDP socket trick (not `gethostbyname` — returns 127.0.1.1 on Ubuntu 22.04)
 - Status line: `ESP32 ONLINE` / `ESP32 OFFLINE`
 - ROS line: `ROS UP` / `ROS DOWN`
+- OLED layout is still being tuned; keep the data path stable, but expect font/spacing
+  adjustments to continue.
 
 **Systemd service:** `/etc/systemd/system/oled-display.service` (Pi only, not in git)
 - `User=ryan` — requires ryan to be in gpio/spi/dialout groups (see above)
@@ -365,11 +367,13 @@ Memory addressing: **page mode** (`0x20 0x02`) — must match `_show()` which us
 - NOT in `launch_robot.launch.py` — systemd handles it independently
 
 **Current OLED layout:**
-1. `IP <Pi IP>`
-2. `BAT <voltage>V  <current>A`
-3. `AGE hh:mm:ss` link uptime since the current ESP32 telemetry session started
-4. `ESP32 ONLINE` / `ESP32 OFFLINE`
-5. `ROS UP` / `ROS DOWN`
+1. `<Pi IP>`
+2. `<voltage>V  <current>A`
+3. `ROS OK  ESP OK`
+4. `UPTIME mm:ss` or `h:mm:ss`
+
+**Note:** the layout is not frozen yet. The battery feed is correct, but the
+visual arrangement is still being refined.
 
 ```bash
 sudo systemctl status oled-display

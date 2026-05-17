@@ -53,6 +53,8 @@ described above:
 
 The bridge profile should prove command delivery at zero first, then measure
 active-motion smoothness. Bursty velocity is still the blocker if motion pulses.
+The Pi-to-ESP32 bridge is still an active cleanup area; if command delivery
+looks inconsistent, treat that as a bridge problem before blaming PID.
 
 ---
 
@@ -80,6 +82,8 @@ encoder actuals, filtered speed, PWM, and battery directly on the ESP32. Use a
 dev machine to capture and graph that output. Do not pull the Pi into this stage.
 The bench auto-starts after boot, runs the PID segment, then continues into the
 power sweep, so no manual keypress is needed.
+The OLED display is still being tuned visually; it is useful for battery and
+link status, but it is not part of the control loop.
 
 For Pi-to-ESP32 communication checks, use the same Python runner with
 `--profile bridge`. It logs the same battery, odom, IMU, encoder, and command
