@@ -25,10 +25,12 @@ def generate_launch_description():
                 )]), launch_arguments={'use_sim_time': 'false', 'use_ros2_control': 'true'}.items()
     )
 
-    # twist_mux uses UDP-only FastDDS to avoid SHM discovery failure with vel_smoother.
-    # vel_smoother and micro_ros_agent use default FastDDS (SHM+UDP) so they communicate
-    # via SHM on the same Pi without breaking the micro_ros_agent bridge.
-    _no_shm_env = {'FASTRTPS_DEFAULT_PROFILES_FILE': '/home/ryan/fastdds_no_shm.xml'}
+    # twist_mux and vel_smoother use UDP-only FastDDS to avoid same-host SHM
+    # delivery failures. micro_ros_agent stays on default FastDDS (SHM+UDP), so
+    # it can still receive UDP from local nodes and network publishers.
+    no_shm_profile = os.path.join(
+        get_package_share_directory(package_name), 'config', 'fastdds_no_shm.xml')
+    _no_shm_env = {'FASTRTPS_DEFAULT_PROFILES_FILE': no_shm_profile}
 
     twist_mux_params = os.path.join(get_package_share_directory(package_name), 'config', 'twist_mux.yaml')
     twist_mux = Node(
