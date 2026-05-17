@@ -5,7 +5,7 @@
 ### What this project is
 ROS 2 Humble differential drive robot. RPi 4 + ESP32-S3 (production stack — Arduino Nano replaced). Based on Articulated Robotics tutorial series.
 
-### Current state (2026-05-16)
+### Current state (2026-05-17)
 - Nav2 autonomous navigation ✅ working (saved map at `~/mybot_ws/maps/my_map`)
 - RealSense D435 ✅ color + depth 640×480@15fps (RSUSB backend, fix #18)
 - **Pi fully restored after reflash** ✅: ROS Humble, mybot_ws, microros_ws, librealsense RSUSB, udev rules, SLAM map — all restored. Pi IP: 192.168.86.33
@@ -36,14 +36,18 @@ ROS 2 Humble differential drive robot. RPi 4 + ESP32-S3 (production stack — Ar
   - Bench sequence: PID rotation run, then power sweep, then stop
   - Low-level tuning no longer depends on the Pi bridge
   - Use the dev machine to capture the ESP32 telnet log for graphs
-- **Waveshare 2.42" OLED display** ✅ DATA PATH WORKING, LAYOUT STILL BEING TUNED:
+- **Waveshare 2.42" OLED display** ✅ FINALIZED (2026-05-17):
   - `oled-display.service` ENABLED, running as `ryan`, survives cold power cycle
-  - Shows: IP, battery V/A, telemetry age, `ESP32 ONLINE/OFFLINE`, and `ROS UP/DOWN`
-  - Reads battery telemetry directly from the ESP32 Telnet stream; it no longer depends on DDS battery subscriptions
-  - Root cause of "dark display": RPi.GPIO requires gpio/spi groups (fix #25 below)
-  - Root cause of "BAT -- / AGENT OFFLINE": the old DDS-based OLED data path; OLED now reads ESP32 telemetry directly
-  - Final font/spacing/layout is still under review
-  - Service uses default FastDDS (SHM+UDP); self-restart loop in node handles timing
+  - Layout locked — do not reopen font/spacing/icon placement
+  - Font: DejaVuSansMono.ttf regular, 11pt row 1 / 9pt rows 2-4; border + 3 dividers; 6px right margin
+  - Row 1: dynamic 4-bar battery icon (9.0–12.6V) + voltage left + current right-aligned
+  - Row 2: "IP" left + IP address right-aligned
+  - Row 3: "ROS OK/OFF" left + "ESP OK/OFF" right-aligned
+  - Row 4: "UPTIME" left + elapsed ESP32 link time right-aligned
+  - Battery reads directly from ESP32 Telnet stream (`esp32-mybot.local:23`) — no ROS dependency
+  - Node auto-restarts (os._exit(1)) after 30s with no ESP32 data
+  - **Orphan process warning**: never run `ros2 run articubot_one oled_display_node.py` manually while service is active — two instances fight over SPI bus and cause flickering
+  - **Next**: add features — blinking low battery, ROS heartbeat timeout, WiFi state, CPU temp, mode indicators
 - **Fully automatic boot** ✅ (2026-05-15):
   - `robot-launch.service` ENABLED — starts micro_ros_agent + sensor stack at boot
   - ESP32 watchdog: 30 s in WAITING state → `esp_restart()` → USB re-enumerates cleanly (fix #29)
@@ -62,13 +66,18 @@ carry that change forward everywhere it matters.
 - Do not leave recurring failures as notes for manual repetition later.
 
 ### Next steps
-1. **Verify Pi–ESP32 bridge is stable** (see docs/workflow.md troubleshooting section)
-   - Confirm `robot-launch.service` ExecStartPre includes `rm -f /dev/shm/fastrtps_*` (fix #34)
-   - After any OTA flash or ESP32 watchdog reset: `ssh ryan@mybot "sudo systemctl restart robot-launch.service"`
-   - Bridge healthy when `ros2 topic hz /diff_cont/odom` shows ~30 Hz
-2. ESP32 bench PID tuning (test_pid_bench — ESP32-only, no Pi needed)
-3. Object Tracking with OpenCV (final tutorial chapter)
-4. Jetson Nano setup (Docker + ROS 2 Humble + CUDA)
+1. **Full motion control verification and fix** — PID gains (Kp=20, Ki=5, Kd=0) confirmed in code but not tested on real floor. On-blocks encoder test first (confirm both wheels track targets), then straight-line drive, then turns. Tune KI_MAX / Ki / vel_smoother accel limits as needed.
+2. **OLED display — feature additions** (layout is finalized, UI is done):
+   - Blinking low battery warning (< 10.5V)
+   - ROS heartbeat timeout indicator (ROS OK → ROS OFF if /odom stalls)
+   - WiFi disconnected state (IP row shows "NO WIFI" when socket fails)
+   - Charging indicator (current > 0 = charging)
+   - CPU temperature warning (Pi throttle threshold ~80°C)
+   - Boot animation (splash on cold start before telemetry arrives)
+   - Autonomous/manual mode indicator (future — tied to Nav2 active state)
+   - Motor fault / encoder health indicator (future — tied to ESP32 telemetry)
+3. **Object Tracking with OpenCV** — final tutorial chapter (ball_tracker deleted; recreate from upstream)
+4. **Jetson Nano setup** (Docker + ROS 2 Humble + CUDA)
 
 ---
 
@@ -167,7 +176,8 @@ Remote: `github.com/Dasovon/MyBot`
 ## Session State Notes
 - 2026-05-17: backup branch `backup/pre-cleanup-2026-05-16` exists on GitHub for the pre-cleanup tree.
 - 2026-05-17: legacy Arduino bridge moved out of `src/` into `legacy/ros_arduino_bridge/`; dead artifacts and the old Pi-side INA219/ball-tracker files were removed.
-- 2026-05-17: Pi workspace synced to `01c50d6` and `oled-display.service` restarted cleanly on the updated checkout.
+- 2026-05-17: OLED display layout finalized at commit `c184298`. Font: DejaVuSansMono regular 11pt/9pt. Battery icon nudged to y=2 for vertical alignment with row 1 text. Layout is locked — next session focuses on features only.
+- 2026-05-17: Pi synced to `c184298`. `oled-display.service` running cleanly. Motion fix #34 confirmed in code but not yet verified on real floor.
 - 2026-05-17: `/imu/imu` topic is present on the Pi ROS graph with one live publisher, but a CLI echo did not capture a sample before timeout.
 
 ---
@@ -1012,3 +1022,27 @@ from dev machine to `/cmd_vel_raw` works (uses UDP network transport, bypasses S
 - `src/articubot_one/scripts/vel_smoother.py` — `cmd_timeout` param + target zeroing on silence
 - `docs/pi-setup.md` — SHM cleanup added to robot-launch.service template
 - `docs/workflow.md` — bridge troubleshooting section added
+
+### 36) OLED display layout finalized (2026-05-17)
+
+**Changes made across this session:**
+
+1. **Font**: switched from org01 custom pixel font (1× / 1.5× / 2× scale) and DejaVuSansMono-Bold to **DejaVuSansMono regular** at 11pt (row 1) and 9pt (rows 2-4). Regular at small sizes renders cleaner than bold on 128×64; monospace required for stable right-alignment.
+
+2. **Layout locked** — 4 rows (16px each), border + 3 dividers, 6px right margin:
+   - Row 1: 4-bar dynamic battery icon (9.0–12.6V range) + voltage left + current right
+   - Row 2: "IP" left + IP address right-aligned
+   - Row 3: "ROS OK/OFF" left + "ESP OK/OFF" right-aligned
+   - Row 4: "UPTIME" left + ESP32 link elapsed time right-aligned
+
+3. **Battery icon vertical alignment (fix #36)**: icon y-coordinate nudged from y=4 to y=2 to align icon center with 11pt text cap height in row 1.
+
+4. **org01_font.py** added — custom 5×5 bitmap pixel font kept in repo but not used by display node.
+
+5. **Repo cleanup** (same session): `src/ros_arduino_bridge/` → `legacy/`; deleted ina219_node.py, movement_validation.md, debug .gv/.pdf artifacts, ball_tracker files; `.gitignore` updated.
+
+**Decision**: layout is frozen. Future OLED work = features only (blinking low battery, heartbeat timeout, WiFi state, CPU temp, boot animation, mode indicators).
+
+**Files changed:**
+- `src/articubot_one/scripts/oled_display_node.py` — final font/layout/icon placement (commit `c184298`)
+- `src/articubot_one/scripts/org01_font.py` — new custom pixel font (kept, not active)
