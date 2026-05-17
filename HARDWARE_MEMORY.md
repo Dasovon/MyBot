@@ -27,7 +27,7 @@ ESP32-S3-DevKitC-1 — 192.168.86.43 (WiFi OTA only)
 └── I2C GPIO8/9 → BNO055 (0x28) + INA219 (0x40)
 
 Legacy reference:
-- `ros_arduino_bridge` + `diffdrive_arduino` remain in the repo for historical comparison only.
+- `legacy/ros_arduino_bridge` + `diffdrive_arduino` remain in the repo for historical comparison only.
 
 ---
 
@@ -90,7 +90,7 @@ Motor output wiring:
   Left motor  → BO1 + BO2  (both wires on MOTORB pads — NOT the GND pad between sections)
 
 Firmware define: TB6612_MOTOR_DRIVER
-File: src/ros_arduino_bridge/ROSArduinoBridge/ROSArduinoBridge.ino
+File: legacy/ros_arduino_bridge/ROSArduinoBridge/ROSArduinoBridge.ino
 
 Direction logic (TB6612 truth table):
   Forward:  xIN1=HIGH, xIN2=LOW + PWM

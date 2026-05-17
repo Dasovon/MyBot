@@ -2,7 +2,7 @@
 
 ![Arduino Nano pinout](arduino-nano-pinout.png)
 
-**Role in MyBot:** Motor controller. Runs `ros_arduino_bridge` firmware — receives closed-loop speed commands from `ros2_control` over serial, drives the TB6612 motor driver, and reads quadrature encoders.
+**Role in MyBot:** Motor controller. Runs `legacy/ros_arduino_bridge` firmware — receives closed-loop speed commands from `ros2_control` over serial, drives the TB6612 motor driver, and reads quadrature encoders.
 
 > **Migration note:** Will be replaced by the ESP32-S3 in `feature/esp32-microros`.
 
@@ -93,8 +93,8 @@ In practice, the Nano connects to the Pi via USB (CH340 → `/dev/arduino`) — 
 
 ## Firmware
 
-**Firmware:** `ros_arduino_bridge` (modified)
-**File:** `src/ros_arduino_bridge/ROSArduinoBridge/`
+**Firmware:** `legacy/ros_arduino_bridge` (modified)
+**File:** `legacy/ros_arduino_bridge/ROSArduinoBridge/`
 **Firmware define:** `TB6612_MOTOR_DRIVER`
 
 ### Serial protocol (57600 baud, carriage-return terminated)
@@ -126,12 +126,12 @@ sudo fuser -k /dev/arduino
 
 /home/ryan/bin/arduino-cli compile \
   --fqbn arduino:avr:nano:cpu=atmega328old \
-  ~/mybot_ws/src/ros_arduino_bridge/ROSArduinoBridge
+  ~/mybot_ws/legacy/ros_arduino_bridge/ROSArduinoBridge
 
 /home/ryan/bin/arduino-cli upload \
   --fqbn arduino:avr:nano:cpu=atmega328old \
   --port /dev/ttyUSB0 \
-  ~/mybot_ws/src/ros_arduino_bridge/ROSArduinoBridge
+  ~/mybot_ws/legacy/ros_arduino_bridge/ROSArduinoBridge
 ```
 
 FQBN uses `atmega328old` (old bootloader variant, common on clone Nano boards).

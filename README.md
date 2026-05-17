@@ -310,7 +310,7 @@ MyBot/
 │   │       └── test_microros/  # micro-ROS transport test
 │   ├── diffdrive_arduino/      # ros2_control plugin  [branch: humble]
 │   ├── serial/                 # Serial library  [branch: newans_ros2]
-│   └── ros_arduino_bridge/     # Arduino firmware (legacy reference only)
+│   └── legacy/ros_arduino_bridge/ # Arduino firmware (legacy reference only)
 ├── Hardware/                   # CAD renders and motor datasheets
 └── docs/
     ├── workflow.md             # Full launch sequence + emergency stop

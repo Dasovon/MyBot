@@ -142,7 +142,7 @@ rviz2
 ## Critical Rules
 - Plugin string: **`diffdrive_arduino/DiffDriveArduinoHardware`** — never the old `diffdrive_arduino/DiffDriveArduino`
 - Branch locks: `diffdrive_arduino` → `humble` | `serial` → `newans_ros2`
-- `ros_arduino_bridge` = legacy reference only — active path is `ros2_control → diffdrive_arduino → serial`
+- `legacy/ros_arduino_bridge` = legacy reference only — active path is `ros2_control → diffdrive_arduino → serial`
 - After changing plugin packages, branches, or manifests: **true clean rebuild** (`rm -rf build install log`)
 - Never rename controller, joint, or plugin identifiers. ROS is extremely literal.
 - Never change serial device, baud, motor polarity, and encoder mapping all at once during debugging.
@@ -152,7 +152,7 @@ rviz2
 - Build type: `ament_cmake` | Style: ROS-standard snake_case
 - Xacro and YAML own hardware constants — keep them there
 - Surgical edits only — tutorial-derived package has residue; avoid broad cleanup
-- `ros_arduino_bridge` stays in tree as reference; never treat as active runtime
+- `legacy/ros_arduino_bridge` stays in repo as reference; never treat as active runtime
 
 ---
 
@@ -160,7 +160,7 @@ rviz2
 - `src/articubot_one` → `main` (active — includes ESP32 firmware and OLED node)
 - `src/diffdrive_arduino` → `humble` (on Pi, kept in ws but not active)
 - `src/serial` → `newans_ros2` (on Pi, kept in ws but not active)
-- `src/ros_arduino_bridge` → `main` (legacy Arduino firmware reference only)
+- `legacy/ros_arduino_bridge` → `main` (legacy Arduino firmware reference only)
 
 Remote: `github.com/Dasovon/MyBot`
 
@@ -214,8 +214,8 @@ Motor A (PWMA/AIN1/AIN2) = **RIGHT** | Motor B (PWMB/BIN1/BIN2) = **LEFT**
 - Flash:
   ```bash
   fuser -k /dev/ttyUSB0 2>/dev/null
-  /home/ryan/bin/arduino-cli compile --fqbn arduino:avr:nano:cpu=atmega328old ~/mybot_ws/src/ros_arduino_bridge/ROSArduinoBridge
-  /home/ryan/bin/arduino-cli upload --fqbn arduino:avr:nano:cpu=atmega328old --port /dev/ttyUSB0 ~/mybot_ws/src/ros_arduino_bridge/ROSArduinoBridge
+  /home/ryan/bin/arduino-cli compile --fqbn arduino:avr:nano:cpu=atmega328old ~/mybot_ws/legacy/ros_arduino_bridge/ROSArduinoBridge
+  /home/ryan/bin/arduino-cli upload --fqbn arduino:avr:nano:cpu=atmega328old --port /dev/ttyUSB0 ~/mybot_ws/legacy/ros_arduino_bridge/ROSArduinoBridge
   ```
 - Serial commands: `e` (encoders) | `r` (reset) | `o <PWM1> <PWM2>` (raw) | `m <S1> <S2>` (closed-loop)
 
@@ -417,7 +417,7 @@ git clone -b humble https://github.com/joshnewans/diffdrive_arduino.git
 git clone -b newans_ros2 https://github.com/joshnewans/serial.git
 ```
 
-### 3) Stop using `ros_arduino_bridge`
+### 3) Stop using `legacy/ros_arduino_bridge`
 ROS1-era design, replaced by `ros2_control → diffdrive_arduino → serial`.
 
 ### 4) True clean rebuild
@@ -430,7 +430,7 @@ colcon build --symlink-install
 ```
 
 ### 5) Arduino firmware rewrite for correct L298N wiring
-Files changed in `src/ros_arduino_bridge/ROSArduinoBridge/`:
+Files changed in `legacy/ros_arduino_bridge/ROSArduinoBridge/`:
 - `motor_driver.h` — updated pin defines, swapped IN1↔IN2 and IN3↔IN4 to fix reversed direction
 - `motor_driver.ino` — rewrote `initMotorController()` and `setMotorSpeed()` using PWM on ENA/ENB and digitalWrite on IN pins
 - `encoder_driver.h` — updated encoder pin defines (Left: D2+D4, Right: D3+D12)
@@ -526,7 +526,7 @@ Key lessons: `LD_LIBRARY_PATH` tricks don't work — ROS setup.bash prepends its
 
 Diagnosis: first unit damaged by 12V reaching AIN1/BIN1 logic pins (max VCC+0.5V = 5.5V). xIN2 pins unaffected (CCW direction worked). Confirmed via multimeter: BIN1 read 11.9V with motor supply connected.
 
-Note: `src/ros_arduino_bridge/` on Pi is a separate repo. Firmware edits in `articubot_one/src/ros_arduino_bridge/` must be SCP'd to Pi before flashing.
+Note: `legacy/ros_arduino_bridge/` is the archived Arduino firmware tree. Firmware edits in `articubot_one/legacy/ros_arduino_bridge/` must be SCP'd to Pi before flashing.
 
 ### 20) TB6612 wiring table label correction + VCC documentation (2026-04-26)
 Root cause: original table had Motor A and Motor B labels swapped vs firmware. Firmware assigns `RIGHT_MOTOR_*` to Motor A (PWMA/AIN1/AIN2) and `LEFT_MOTOR_*` to Motor B (PWMB/BIN1/BIN2).

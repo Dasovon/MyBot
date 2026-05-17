@@ -10,6 +10,11 @@ src/serial/
 __pycache__/
 *.pyc
 *.pyo
+.vscode/browse.vc.db
+
+# Generated artifacts
+frames_*.gv
+frames_*.pdf
 
 # Editor
 .vscode/

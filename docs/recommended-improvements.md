@@ -64,7 +64,7 @@ This is low-risk and helps `rosdep`, package indexing, and future sharing.
 Some docs still describe the older Arduino/Pi-side sensor stack as if it is active, while newer docs describe ESP32-S3 + micro-ROS as production. This can make debugging harder because the launch files and docs disagree in places.
 
 Recommendation:
-- Mark Arduino and `ros_arduino_bridge` material as legacy reference.
+- Mark Arduino and `legacy/ros_arduino_bridge` material as legacy reference.
 - Make the ESP32 micro-ROS path the primary architecture in README/setup docs.
 - Keep one clear "what runs where" table as the source of truth.
 
@@ -165,10 +165,10 @@ This would make ownership clearer: ROS packages are built by colcon, firmware is
 
 ### 16. Move legacy Arduino bridge under an explicit archive/reference directory
 
-`src/ros_arduino_bridge` is documented as legacy reference only, but its placement under `src/` makes it look like active source.
+`legacy/ros_arduino_bridge` is documented as legacy reference only and is now outside `src/`, which makes the split clearer.
 
 Recommendation:
-- Move it to something like `reference/ros_arduino_bridge/` or `legacy/ros_arduino_bridge/` if it no longer participates in builds.
+- It already lives under `legacy/ros_arduino_bridge/`, so keep it there if it remains reference-only.
 - Add a short README at the legacy directory boundary explaining why it is retained.
 - Keep active runtime launch/config paths free of legacy assumptions.
 

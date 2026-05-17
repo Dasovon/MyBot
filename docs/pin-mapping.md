@@ -23,7 +23,7 @@ Motor output wiring (critical — do NOT use GND pad between sections):
 - Left motor wires  → **BO1 + BO2** pads
 
 Firmware define: `TB6612_MOTOR_DRIVER`
-File: `src/ros_arduino_bridge/ROSArduinoBridge/ROSArduinoBridge.ino`
+File: `legacy/ros_arduino_bridge/ROSArduinoBridge/ROSArduinoBridge.ino`
 
 Firmware pin defines (motor_driver.h):
 ```
