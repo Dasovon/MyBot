@@ -77,7 +77,7 @@ def generate_launch_description():
         # Delay the motion path 2s so any optional drive stack comes up after the bridge.
         # The default boot stack keeps motion disabled so the robot stays still on the ground.
         TimerAction(period=2.0, actions=[twist_mux]),
-        TimerAction(period=2.0, actions=[vel_smoother]),
+        TimerAction(period=4.0, actions=[vel_smoother]),
         TimerAction(period=8.0, actions=[lidar]),
         camera,
     ])
