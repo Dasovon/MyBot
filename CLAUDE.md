@@ -9,7 +9,11 @@ ROS 2 Humble differential drive robot. RPi 4 + ESP32-S3 (production stack — Ar
 - Nav2 autonomous navigation ✅ working (saved map at `~/mybot_ws/maps/my_map`)
 - RealSense D435 ✅ color + depth 640×480@15fps (RSUSB backend, fix #18)
 - **Pi fully restored after reflash** ✅: ROS Humble, mybot_ws, microros_ws, librealsense RSUSB, udev rules, SLAM map — all restored. Pi IP: 192.168.86.33
-- **ESP32-S3 driving with Pi velocity smoother** (fix #33 + #34):
+- **Full motion pipeline verified on bench** ✅ (2026-05-17, fix #37 + #38):
+  - Both wheels track tgt=5.88 rad/s (0.2 m/s forward), actual ≈ 5.5–5.9 rad/s, left/right < 0.2% divergence
+  - Ramp-up working: vel_smoother 0.5 m/s² limit visible in tgt sequence
+  - Next: floor test (straight-line, turns, PID tuning)
+- **ESP32-S3 driving with Pi velocity smoother** (fix #33 + #34 + #37 + #38):
   - Publishes: `/diff_cont/odom` (30Hz), `/imu/imu` (30Hz), `/battery_state` (1Hz)
   - Subscribes: `/diff_cont/cmd_vel_unstamped`
   - Robot stack auto-starts with `robot-launch.service`; `mybot-launch` remains the manual restart path
@@ -22,10 +26,11 @@ ROS 2 Humble differential drive robot. RPi 4 + ESP32-S3 (production stack — Ar
     - If robot creeps after stop → lower KI_MAX first (try 5), then Ki
   - EMA filter: VEL_ALPHA=0.2 (suppresses left encoder EMI noise)
   - REVERSAL_COAST_VEL=3.0 rad/s
-  - CMD_TIMEOUT_MS=1000ms (safety stop if publisher dies while agent alive)
+  - CMD_TIMEOUT_MS=3000ms (safety stop if publisher dies while agent alive)
   - Motion arming requires a stable zero hold after boot/reconnect; a single zero packet does not re-enable motion
   - **Launch path**: `twist_mux → /cmd_vel_raw → vel_smoother.py (50Hz, 0.5 m/s², 1.0 rad/s²) → /diff_cont/cmd_vel_unstamped`
-  - vel_smoother starts 2s after twist_mux (TimerAction) — prevents FastDDS SHM discovery failure (fix #34)
+  - twist_mux and vel_smoother use UDP-only FastDDS (`config/fastdds_no_shm.xml`); micro_ros_agent uses default SHM+UDP (fix #37)
+  - vel_smoother starts 4s after service launch (TimerAction) — prevents FastDDS SHM discovery failure (fix #34)
   - vel_smoother now requires a stable zero hold at startup before it forwards nonzero motion, which blocks stale boot commands on the Pi side
   - robot-launch.service cleans `/dev/shm/fastrtps_*` before each start (fix #34)
   - **Teleop must use `repeat_rate:=10.0`**: `ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p repeat_rate:=10.0`
@@ -66,7 +71,7 @@ carry that change forward everywhere it matters.
 - Do not leave recurring failures as notes for manual repetition later.
 
 ### Next steps
-1. **Full motion control verification and fix** — PID gains (Kp=20, Ki=5, Kd=0) confirmed in code but not tested on real floor. On-blocks encoder test first (confirm both wheels track targets), then straight-line drive, then turns. Tune KI_MAX / Ki / vel_smoother accel limits as needed.
+1. **Floor test motion control** — bench test passed (both wheels tracking 0.2 m/s). Next: place on floor, test straight-line drive, turns, and combined arcs. Tune KI_MAX / Ki / vel_smoother accel limits as needed. Teleop: `ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p repeat_rate:=10.0`
 2. **OLED display — feature additions** (layout is finalized, UI is done):
    - Blinking low battery warning (< 10.5V)
    - ROS heartbeat timeout indicator (ROS OK → ROS OFF if /odom stalls)
@@ -1046,3 +1051,30 @@ from dev machine to `/cmd_vel_raw` works (uses UDP network transport, bypasses S
 **Files changed:**
 - `src/articubot_one/scripts/oled_display_node.py` — final font/layout/icon placement (commit `c184298`)
 - `src/articubot_one/scripts/org01_font.py` — new custom pixel font (kept, not active)
+
+### 37) vel_smoother → micro_ros_agent same-host FastDDS SHM delivery failure (2026-05-17)
+
+**Symptom:** vel_smoother publishes to `/diff_cont/cmd_vel_unstamped` at 50Hz (confirmed with `ros2 topic hz`). DDS graph shows both vel_smoother publisher and esp32_robot subscriber with matching BEST_EFFORT QoS. But ESP32 cmd_cb never fires — no `[cmd]` lines in telnet output. Direct publish from dev machine (network UDP) to the same topic reaches ESP32 fine.
+
+**Root cause:** FastDDS same-host SHM transport between vel_smoother and micro_ros_agent is broken. Only one SHM segment (`/dev/shm/fastrtps_port7413`) exists — no per-participant unicast segments. SHM data delivery fails silently. micro_ros_agent can receive via network UDP (from dev machine) but not via SHM loopback (from vel_smoother).
+
+**Fix:** Apply `additional_env=_no_shm_env` (UDP-only FastDDS profile) to vel_smoother as well as twist_mux. vel_smoother publishes via UDP; micro_ros_agent, which stays on default FastDDS (SHM+UDP), receives it via UDP — same path as the dev machine.
+
+**Also:** Move `fastdds_no_shm.xml` from a manually-created Pi-only file (`/home/ryan/fastdds_no_shm.xml`) into the repo at `src/articubot_one/config/fastdds_no_shm.xml`. Reference it via `get_package_share_directory` so the path is portable and survives fresh Pi setups.
+
+**Files changed:**
+- `src/articubot_one/launch/launch_robot.launch.py` — vel_smoother gets `additional_env=_no_shm_env`; path updated to package share
+- `src/articubot_one/config/fastdds_no_shm.xml` — new file: UDPv4-only FastDDS participant profile
+
+### 38) CMD_TIMEOUT false-trigger: stale `now` vs fresh `t_cmd_last` underflow (2026-05-17)
+
+**Symptom:** After fix #37, `[cmd]` lines appear (vel_smoother delivering zeros) and `armed=1` shows in cmd log. But `motion_armed` resets on every control tick — "motion armed after zero hold" fires every ~33ms. Sending 0.2 m/s only drove the motors for one tick (tgt=5.88 for one [enc] line, then back to 0).
+
+**Root cause:** `now = millis()` is captured once at the top of `loop()`. `rclc_executor_spin_some` runs for up to 10ms (its configured timeout) and cmd_cb fires inside it, setting `t_cmd_last = millis()` (CURRENT time). After the spin, `now` is stale by ~10ms. In the control block: `now - t_cmd_last` is a uint32 subtraction with `now < t_cmd_last` → underflows to ~4.29 billion ms → always > CMD_TIMEOUT_MS (3000ms) → CMD_TIMEOUT fires every tick → motion_armed=false every tick → 1s re-arm cycle.
+
+**Fix:** Add `now = millis();` immediately after `rclc_executor_spin_some` in the CONNECTED case. This refreshes `now` so it is always >= `t_cmd_last` before the CMD_TIMEOUT check.
+
+**Verified:** After fix, zero arming events during a 6-second bench run. Both wheels track tgt=5.88/5.88 rad/s (0.2 m/s) continuously. Encoder counts reached 3135/3131 (near-identical left/right). Velocity ramp visible in tgt sequence (vel_smoother 0.5 m/s² accel limit working end-to-end).
+
+**Files changed:**
+- `src/esp32_microros/src/main.cpp` — `now = millis();` after `rclc_executor_spin_some` in CONNECTED case
