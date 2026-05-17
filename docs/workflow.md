@@ -24,6 +24,7 @@ Claude Code runs on dev. It reaches the Pi via `ssh ryan@mybot "..."`.
 > Low-level PID tuning runs on the ESP32 bench firmware in `src/esp32_microros/test/test_pid_bench`; the dev machine captures the logs.
 > The OLED battery path is direct from the ESP32, but the display layout is still being refined.
 > The Pi-to-ESP32 communication path still has open cleanup work; keep that separate from OLED layout work.
+> Repo cleanup note (2026-05-17): the legacy Arduino bridge now lives under `legacy/ros_arduino_bridge/`, the dead Pi-side INA219 and ball-tracker files were removed, and the Pi workspace was synced to `01c50d6`.
 
 ### Full launch sequence
 

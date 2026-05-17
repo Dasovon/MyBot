@@ -164,6 +164,12 @@ rviz2
 
 Remote: `github.com/Dasovon/MyBot`
 
+## Session State Notes
+- 2026-05-17: backup branch `backup/pre-cleanup-2026-05-16` exists on GitHub for the pre-cleanup tree.
+- 2026-05-17: legacy Arduino bridge moved out of `src/` into `legacy/ros_arduino_bridge/`; dead artifacts and the old Pi-side INA219/ball-tracker files were removed.
+- 2026-05-17: Pi workspace synced to `01c50d6` and `oled-display.service` restarted cleanly on the updated checkout.
+- 2026-05-17: `/imu/imu` topic is present on the Pi ROS graph with one live publisher, but a CLI echo did not capture a sample before timeout.
+
 ---
 
 ## Hardware

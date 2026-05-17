@@ -29,6 +29,11 @@ ESP32-S3-DevKitC-1 — 192.168.86.43 (WiFi OTA only)
 Legacy reference:
 - `legacy/ros_arduino_bridge` + `diffdrive_arduino` remain in the repo for historical comparison only.
 
+Repository cleanup note (2026-05-17):
+- The legacy Arduino bridge now lives under `legacy/ros_arduino_bridge/` instead of `src/`.
+- `movement_validation.md`, the March frame artifacts, the old Pi-side `ina219_node.py`, and the ball-tracker launch/config files were removed from the active tree.
+- The Pi workspace was synced to commit `01c50d6` and the OLED service was restarted from that clean checkout.
+
 ---
 
 ## Serial Links
@@ -66,6 +71,10 @@ Axis validation (2026-05-03, when on Pi I2C — same physical mount, ESP32 reads
 - IMU z-axis = robot yaw (gyro z negative for clockwise rotation)
 - placement_axis_remap: P1 (confirmed correct)
 - Circle test: gyro z = -0.494 rad/s at -0.525 rad/s commanded
+
+Pi graph check (2026-05-17):
+- `/imu/imu` was present on the Pi ROS graph with one live publisher.
+- A CLI echo attempt timed out before a sample arrived, so the message payload was not captured in this session.
 
 ESP32 firmware config: orientation_covariance[0]=-1 so EKF ignores orientation (magnetometer
 unreliable on metal chassis); angular velocity + linear accel enabled.
