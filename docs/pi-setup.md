@@ -506,6 +506,19 @@ If you want immediate data without waiting for the auto-restart cycle:
 sudo systemctl restart oled-display   # after mybot-launch is running
 ```
 
+### Display stops updating during motor tuning
+The OLED service and the motor-test runner both read the ESP32 Telnet stream. The ESP32 Telnet
+server is effectively single-client, so motor tuning can starve or stale the OLED data feed.
+
+Temporary fix while tuning motors:
+```bash
+sudo systemctl stop oled-display.service      # before encoder-count floor tests
+sudo systemctl restart oled-display.service   # after tests
+```
+
+Long-term fix: move OLED status off the exclusive ESP32 Telnet stream, or add a Pi-side telemetry
+multiplexer that owns the ESP32 Telnet connection and fans data out to the OLED and test tooling.
+
 ### ESP32 not reconnecting after Pi reboot (requires manual reset button)
 HWCDC (native USB) gets into an inconsistent state when the Linux USB host re-enumerates during
 reboot. The ESP32 enters WAITING state but `rmw_uros_ping_agent()` always times out because the

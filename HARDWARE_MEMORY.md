@@ -390,6 +390,12 @@ sudo systemctl restart oled-display
 journalctl -u oled-display -f
 ```
 
+**Temporary motor-tuning rule:** stop `oled-display.service` before encoder-count-based floor tests
+and restart it afterward. The OLED and the test runner both consume the ESP32 Telnet stream, which
+is effectively single-client. If both run at once, the display can freeze and the test runner can
+miss encoder samples. Permanent fix: move OLED telemetry off raw ESP32 Telnet or add a telemetry
+multiplexer.
+
 **SPI interface verification:** `ls /dev/spidev*` → should show `/dev/spidev0.0`.
 Enable SPI: `echo "dtparam=spi=on" | sudo tee -a /boot/firmware/config.txt && sudo reboot`
 (raspi-config is not available on Ubuntu 22.04 — edit config.txt directly.)

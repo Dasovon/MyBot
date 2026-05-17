@@ -101,6 +101,8 @@ class Step:
     angular: float
     duration: float
     stop_hold: float
+    goal_counts: int = 0    # >0 = count-based stop; 0 = time-based
+    max_counts: int = 0     # adaptive upper bound (0 = same as goal_counts)
 
 
 def make_twist(linear: float, angular: float) -> Twist:
@@ -260,12 +262,23 @@ class DriveSequenceRunner(Node):
         self.latest_raw = None
         self.latest_ekf = None
         self.latest_enc = None
+        self.latest_enc_at = None
         self.latest_enc_counts = None
+        self.latest_enc_counts_at = None
         self.latest_cmd = make_twist(0.0, 0.0)
         self._state_lock = threading.Lock()
         self._enc_stop = threading.Event()
+        self._enc_sock = None
+        self._enc_sock_lock = threading.Lock()
 
         self.pub = self.create_publisher(Twist, args.command_topic, 10)
+        self.stop_pubs = [self.pub]
+        stop_topics = ["/cmd_vel_joy", "/cmd_vel"]
+        if args.stop_output_topic:
+            stop_topics.append("/diff_cont/cmd_vel_unstamped")
+        for topic in stop_topics:
+            if topic != args.command_topic:
+                self.stop_pubs.append(self.create_publisher(Twist, topic, 10))
         if args.command_topic == "/cmd_vel_joy":
             self.get_logger().info(
                 "This runner expects motion to be enabled at launch (enable_motion:=true) so twist_mux is active."
@@ -322,6 +335,7 @@ class DriveSequenceRunner(Node):
         self.writer.writerow(["# turn_max_revolutions", args.turn_max_revolutions])
         self.writer.writerow(["# turn_extend_revolutions", args.turn_extend_revolutions])
         self.writer.writerow(["# turn_linear_ms", args.turn_linear])
+        self.writer.writerow(["# turn_angular_rads", args.turn_angular])
         self.writer.writerow(["# turn_velocity_floor", args.turn_velocity_floor])
         self.writer.writerow(["# turn_adaptive", args.turn_adaptive])
         self.writer.writerow(["# turn_max_time_s", args.turn_max_time])
@@ -363,10 +377,31 @@ class DriveSequenceRunner(Node):
                     key="i",
                     label="one_turn",
                     linear=args.turn_linear,
-                    angular=0.0,
+                    angular=args.turn_angular,
                     duration=args.turn_max_time,
                     stop_hold=args.stop_hold,
+                    goal_counts=self._turn_goal_counts,
+                    max_counts=self._turn_max_counts,
                 )
+            ]
+        if args.profile == "floor_baseline":
+            # Canonical 4-move floor test: fwd 1m, bwd 1m, left 360°, right 360°
+            # All moves run in one process to avoid DDS re-matching between invocations.
+            cpr = args.turn_counts_per_rev
+            fwd_counts = max(1, int(round(cpr * 4728.0 / 1010.0)))
+            spin_counts = max(1, int(round(cpr * 2659.0 / 1010.0)))
+            lin = args.turn_linear
+            spn = args.floor_spin_rate
+            timeout = args.turn_max_time
+            stop_h = args.stop_hold
+            self._turn_goal_counts = fwd_counts
+            self._turn_max_counts = fwd_counts
+            self._turn_extend_counts = 0
+            return [
+                Step(key="i", label="fwd_1m",    linear=lin,  angular=0.0,  duration=timeout, stop_hold=stop_h, goal_counts=fwd_counts,  max_counts=fwd_counts),
+                Step(key=",", label="bwd_1m",    linear=-lin, angular=0.0,  duration=timeout, stop_hold=stop_h, goal_counts=fwd_counts,  max_counts=fwd_counts),
+                Step(key="j", label="left_360",  linear=0.0,  angular=spn,  duration=timeout, stop_hold=stop_h, goal_counts=spin_counts, max_counts=spin_counts),
+                Step(key="l", label="right_360", linear=0.0,  angular=-spn, duration=timeout, stop_hold=stop_h, goal_counts=spin_counts, max_counts=spin_counts),
             ]
         return build_profile(args.profile, args.duration, args.stop_hold)
 
@@ -398,10 +433,13 @@ class DriveSequenceRunner(Node):
 
     def _update_encoder_sample(self, sample):
         with self._state_lock:
+            sample_at = time.monotonic()
             self.latest_enc = sample
+            self.latest_enc_at = sample_at
             self._bridge_enc_seen = True
             if sample.get("cnt_l") is not None and sample.get("cnt_r") is not None:
                 self.latest_enc_counts = sample
+                self.latest_enc_counts_at = sample_at
                 self.summary["max_abs_enc_cnt_l"] = max(self.summary["max_abs_enc_cnt_l"], abs(int(sample["cnt_l"])))
                 self.summary["max_abs_enc_cnt_r"] = max(self.summary["max_abs_enc_cnt_r"], abs(int(sample["cnt_r"])))
             if hasattr(self, "summary"):
@@ -437,6 +475,14 @@ class DriveSequenceRunner(Node):
     def _send_encoder_reset(self):
         host = self.args.encoder_host
         port = self.args.encoder_port
+        with self._enc_sock_lock:
+            sock = self._enc_sock
+        if sock is not None:
+            try:
+                sock.sendall(b"r")
+                return
+            except Exception as exc:
+                self.get_logger().warn(f"encoder reset on monitor socket failed: {exc}")
         try:
             with socket.create_connection((host, port), timeout=5.0) as sock:
                 sock.sendall(b"r")
@@ -449,6 +495,8 @@ class DriveSequenceRunner(Node):
         while not self._enc_stop.is_set():
             try:
                 with socket.create_connection((host, port), timeout=5.0) as sock:
+                    with self._enc_sock_lock:
+                        self._enc_sock = sock
                     sock.settimeout(1.0)
                     buffer = ""
                     while not self._enc_stop.is_set():
@@ -485,7 +533,12 @@ class DriveSequenceRunner(Node):
                                     "filt_r": float(match.group("filt_r")),
                                 }
                             )
+                    with self._enc_sock_lock:
+                        if self._enc_sock is sock:
+                            self._enc_sock = None
             except Exception as exc:
+                with self._enc_sock_lock:
+                    self._enc_sock = None
                 self.get_logger().warn(f"encoder monitor offline: {exc}")
                 if self._enc_stop.wait(2.0):
                     break
@@ -494,7 +547,9 @@ class DriveSequenceRunner(Node):
         if self.phase == "arm":
             return 0.0, 0.0
         if self.phase == "preflight":
-            return self.steps[0].linear if self.steps else 0.0, 0.0
+            if not self.steps:
+                return 0.0, 0.0
+            return self.steps[0].linear, self.steps[0].angular
         if self.phase == "active":
             return self.current_step.linear, self.current_step.angular
         return 0.0, 0.0
@@ -523,9 +578,19 @@ class DriveSequenceRunner(Node):
                     return True
                 return False
             if enc:
+                enc_at = self.latest_enc_at or 0.0
+                if enc_at < (self._preflight_started_at or 0.0):
+                    return False
                 tgt_l = abs(float(enc.get("tgt_l", 0.0)))
-                expected = (self.steps[0].linear / WHEEL_RADIUS) if self.steps else 0.0
-                if tgt_l > 0.5 * expected:
+                tgt_r = abs(float(enc.get("tgt_r", 0.0)))
+                if self.steps:
+                    step = self.steps[0]
+                    expected_l = (step.linear - step.angular * WHEEL_SEP * 0.5) / WHEEL_RADIUS
+                    expected_r = (step.linear + step.angular * WHEEL_SEP * 0.5) / WHEEL_RADIUS
+                    expected = max(abs(expected_l), abs(expected_r))
+                else:
+                    expected = 0.0
+                if max(tgt_l, tgt_r) > 0.5 * expected:
                     self._preflight_tgt_seen = True
                     return True
             if elapsed > 5.0:
@@ -538,10 +603,13 @@ class DriveSequenceRunner(Node):
                 self.done = True
                 return True
             return False
-        if self.args.profile == "one_turn" and self.phase == "active":
+        if self.current_step.goal_counts > 0 and self.phase == "active":
             with self._state_lock:
                 enc = self.latest_enc_counts or {}
+                enc_at = self.latest_enc_counts_at or 0.0
             if enc:
+                if self._turn_started_at is not None and enc_at < self._turn_started_at:
+                    return False
                 left = abs(int(enc.get("cnt_l", 0)))
                 right = abs(int(enc.get("cnt_r", 0)))
                 target = self._turn_goal_counts
@@ -562,8 +630,11 @@ class DriveSequenceRunner(Node):
                         )
                         return False
                     return True
-                if (time.monotonic() - self._turn_started_at) >= self.args.turn_max_time:
-                    self.get_logger().warn("one_turn timeout reached before target count")
+                if (time.monotonic() - self._turn_started_at) >= self.current_step.duration:
+                    self.get_logger().warn(
+                        f"count-based step '{self.current_step.label}' timeout reached before target count "
+                        f"({min(left, right)}/{target})"
+                    )
                     return True
         if self.phase == "warmup":
             return (time.monotonic() - self.phase_started) >= self.warmup_seconds
@@ -573,6 +644,18 @@ class DriveSequenceRunner(Node):
 
     def _advance(self):
         if self.phase == "arm":
+            if self.current_step.goal_counts > 0:
+                self._publish_zero()
+                self._turn_goal_counts = self.current_step.goal_counts
+                self._turn_max_counts = self.current_step.max_counts or self.current_step.goal_counts
+                if not self.args.no_encoder_reset:
+                    self._send_encoder_reset()
+                    with self._state_lock:
+                        self.latest_enc_counts = None
+                        self.latest_enc_counts_at = None
+                self.phase = "warmup"
+                self.phase_started = time.monotonic()
+                return
             self.phase = "preflight"
             self.phase_started = time.monotonic()
             self._publish_zero()
@@ -582,8 +665,11 @@ class DriveSequenceRunner(Node):
             self._publish_zero()
             if not self.done:
                 self.get_logger().info("preflight OK — commands reaching ESP32")
-                if self.args.profile == "one_turn" and not self.args.no_encoder_reset:
+                if self.current_step.goal_counts > 0 and not self.args.no_encoder_reset:
                     self._send_encoder_reset()
+                    with self._state_lock:
+                        self.latest_enc_counts = None
+                        self.latest_enc_counts_at = None
                 self.phase = "warmup"
                 self.phase_started = time.monotonic()
             return
@@ -591,6 +677,7 @@ class DriveSequenceRunner(Node):
         if self.phase == "warmup":
             self.phase = "active"
             self.phase_started = time.monotonic()
+            self._turn_started_at = self.phase_started if self.current_step.goal_counts > 0 else None
             return
 
         if self.phase == "active":
@@ -608,8 +695,21 @@ class DriveSequenceRunner(Node):
                 return
             self.sequence_index = 0
         self.current_step = self.steps[self.sequence_index]
-        self.phase = "active"
-        self.phase_started = time.monotonic()
+        if self.current_step.goal_counts > 0:
+            self._publish_zero()
+            self._turn_goal_counts = self.current_step.goal_counts
+            self._turn_max_counts = self.current_step.max_counts or self.current_step.goal_counts
+            self._turn_started_at = None
+            if not self.args.no_encoder_reset:
+                self._send_encoder_reset()
+                with self._state_lock:
+                    self.latest_enc_counts = None
+                    self.latest_enc_counts_at = None
+            self.phase = "warmup"
+            self.phase_started = time.monotonic()
+        else:
+            self.phase = "active"
+            self.phase_started = time.monotonic()
 
     def _publish_zero(self):
         self.latest_cmd = make_twist(0.0, 0.0)
@@ -633,6 +733,8 @@ class DriveSequenceRunner(Node):
 
     def _log_if_due(self):
         if self.done:
+            return
+        if self.args.log_active_only and self.phase != "active":
             return
         now = time.monotonic()
         if now < self.next_log_at:
@@ -708,10 +810,12 @@ class DriveSequenceRunner(Node):
 
     def force_stop(self, duration=1.0):
         # 1.0s covers vel_smoother's 0.5 m/s² ramp-to-zero from max command speed.
-        print("[stop] publishing zeros...", flush=True)
+        print("[stop] publishing zeros to all motion topics...", flush=True)
         end = time.monotonic() + duration
+        zero = make_twist(0.0, 0.0)
         while time.monotonic() < end:
-            self.pub.publish(make_twist(0.0, 0.0))
+            for pub in self.stop_pubs:
+                pub.publish(zero)
             time.sleep(0.05)
         print("[stop] done", flush=True)
 
@@ -725,8 +829,8 @@ class DriveSequenceRunner(Node):
         parser.add_argument(
             "--profile",
             default="rebound",
-            choices=["bridge", "smooth", "rebound", "power", "straight", "turns", "one_turn"],
-            help="predefined teleop-style sequence",
+            choices=["bridge", "smooth", "rebound", "power", "straight", "turns", "one_turn", "floor_baseline"],
+            help="predefined teleop-style sequence; floor_baseline runs fwd/bwd 1m + left/right 360° in one process",
         )
         parser.add_argument(
             "--sequence",
@@ -754,6 +858,18 @@ class DriveSequenceRunner(Node):
         )
         parser.add_argument("--command-rate", type=float, default=10.0, help="publish rate while moving")
         parser.add_argument("--log-rate", type=float, default=10.0, help="CSV sample rate")
+        parser.add_argument(
+            "--log-all-phases",
+            dest="log_active_only",
+            action="store_false",
+            help="log warmup/stop phases as well as active motion; default logs active motion only",
+        )
+        parser.set_defaults(log_active_only=True)
+        parser.add_argument(
+            "--stop-output-topic",
+            action="store_true",
+            help="also publish zero directly to /diff_cont/cmd_vel_unstamped on exit; off by default to avoid perturbing micro-ROS DDS matching",
+        )
         parser.add_argument("--output", default=str(DEFAULT_LOG), help="CSV output file")
         parser.add_argument(
             "--turn-wheel",
@@ -787,6 +903,8 @@ class DriveSequenceRunner(Node):
             help="minimum encoder wheel speed required to extend an adaptive turn",
         )
         parser.add_argument("--turn-linear", type=float, default=0.20, help="linear command during one-turn test")
+        parser.add_argument("--turn-angular", type=float, default=0.0, help="angular command during one-turn test")
+        parser.add_argument("--floor-spin-rate", type=float, default=1.5, help="angular.z speed for floor_baseline spin segments (rad/s)")
         parser.add_argument("--turn-max-time", type=float, default=120.0, help="safety timeout for one-turn test")
         parser.add_argument(
             "--no-encoder-reset",

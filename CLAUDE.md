@@ -12,7 +12,15 @@ ROS 2 Humble differential drive robot. RPi 4 + ESP32-S3 (production stack — Ar
 - **Full motion pipeline verified on bench** ✅ (2026-05-17, fix #37 + #38):
   - Both wheels track tgt=5.88 rad/s (0.2 m/s forward), actual ≈ 5.5–5.9 rad/s, left/right < 0.2% divergence
   - Ramp-up working: vel_smoother 0.5 m/s² limit visible in tgt sequence
-  - Next: floor test (straight-line, turns, PID tuning)
+- **Floor tests 1 + 2 completed** ✅ (2026-05-17, short 1.5s protocol):
+  - Test 1 (KP=28, KI=9, START_PWM_SEED=120): symmetric but 15–90% too fast
+  - Test 2 (KP=28, KI=9, START_PWM_SEED=60, KI_MAX=12, RUN_PWM_FLOOR=55): symmetric, backward/spin slightly slow
+  - Full results in `docs/floor-test-tuning-log.md`
+- **DDS multi-invocation blocker** diagnosed and fixed:
+  - Root cause: each `one_turn` run is a new DDS participant; participant churn degrades micro-ROS command delivery
+  - Fix: `--profile floor_baseline` runs all 4 counted moves (fwd/bwd 1m + left/right 360°) in one process
+  - See `docs/floor-test-tuning-log.md` § "DDS Multi-Invocation Blocker Root Cause and Fix"
+  - **Not yet validated on floor** — first `floor_baseline` run is the next physical step
 - **ESP32-S3 driving with Pi velocity smoother** (fix #33 + #34 + #37 + #38):
   - Publishes: `/diff_cont/odom` (30Hz), `/imu/imu` (30Hz), `/battery_state` (1Hz)
   - Subscribes: `/diff_cont/cmd_vel_unstamped`
@@ -71,7 +79,12 @@ carry that change forward everywhere it matters.
 - Do not leave recurring failures as notes for manual repetition later.
 
 ### Next steps
-1. **Floor test motion control** — bench test passed (both wheels tracking 0.2 m/s). Next: place on floor, test straight-line drive, turns, and combined arcs. Tune KI_MAX / Ki / vel_smoother accel limits as needed. Teleop: `ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p repeat_rate:=10.0`
+1. **Floor test — collect three floor_baseline passes** (DDS blocker fixed):
+   - Stop OLED: `ssh ryan@mybot "sudo systemctl stop oled-display.service"`
+   - Run: `ros2 run articubot_one pid_sequence_test.py --profile floor_baseline --turn-linear 0.35 --floor-spin-rate 1.5 --stop-hold 2.0 --warmup 0.5 --output ~/dev_ws/floor_baseline_1.csv`
+   - Verify all four steps reached their count target (not timed out)
+   - Repeat three times; compare results before making any PID changes
+   - See `docs/floor-test-tuning-log.md` for current firmware constants (KP=28, KI=9, KI_MAX=12, START_PWM_SEED=60)
 2. **OLED display — feature additions** (layout is finalized, UI is done):
    - Blinking low battery warning (< 10.5V)
    - ROS heartbeat timeout indicator (ROS OK → ROS OFF if /odom stalls)

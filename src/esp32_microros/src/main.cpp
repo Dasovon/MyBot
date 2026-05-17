@@ -51,9 +51,9 @@ static constexpr float COUNTS_TO_RAD = (2.0f * M_PI) / ENC_CPR;
 static constexpr float KP            =  28.0f;
 static constexpr float KD            =   0.0f;
 static constexpr float KI            =   9.0f;
-static constexpr float KI_MAX        =  24.0f;
-static constexpr float START_PWM_SEED = 120.0f;  // PWM at first tick from standstill
-static constexpr float RUN_PWM_FLOOR  =  72.0f;    // keep any active command above the deadband while target is nonzero
+static constexpr float KI_MAX        =  12.0f;
+static constexpr float START_PWM_SEED =  60.0f;  // PWM at first tick from standstill
+static constexpr float RUN_PWM_FLOOR  =  55.0f;    // keep any active command above the deadband while target is nonzero
 static constexpr float RUN_PWM_FLOOR_ACTUAL = 2.0f; // rad/s: only apply the floor while the wheel is still in the low-speed band
 static constexpr uint32_t RUN_PWM_START_HOLD_MS = 400; // sustain the floor through the first part of a fresh move
 
@@ -67,6 +67,7 @@ static float vel_l_filt = 0.0f, vel_r_filt = 0.0f;
 static constexpr float REVERSAL_COAST_VEL = 3.0f;  // rad/s: coast before reversing a rolling wheel (raised from 0.8 — EMI noise on left encoder was false-triggering)
 static float cmd_lin = 0.0f, cmd_ang = 0.0f;
 static constexpr uint32_t CMD_TIMEOUT_MS = 3000;
+static constexpr uint32_t CMD_FRESH_FOR_PING_MS = 750;
 static constexpr uint32_t ARM_ZERO_HOLD_MS = 1000;
 static uint32_t t_cmd_last  = 0;
 static bool motion_armed = false;
@@ -477,9 +478,11 @@ void loop() {
                 rcl_publish(&pub_imu, &imu_msg, NULL);
             }
 
-            // Ping keep-alive every 2 s. 500ms/1 attempt: tolerant of floor-load
-            // serial jitter without blocking PID for too long on a real loss.
-            if (now - t_ping >= 2000) {
+            // Ping only when the command stream is stale. vel_smoother publishes
+            // at 50 Hz, so fresh cmd_vel traffic is a better health signal than
+            // rmw_uros_ping_agent(), which can false-fail while data is flowing.
+            uint32_t cmd_age = (t_cmd_last > 0) ? (now - t_cmd_last) : UINT32_MAX;
+            if (cmd_age > CMD_FRESH_FOR_PING_MS && now - t_ping >= 2000) {
                 t_ping = now;
                 if (rmw_uros_ping_agent(500, 1) != RMW_RET_OK) {
                     reset_motion_state();
