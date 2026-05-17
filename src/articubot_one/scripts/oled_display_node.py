@@ -24,8 +24,6 @@ try:
     import spidev
     import RPi.GPIO as GPIO
     from PIL import Image, ImageDraw, ImageFont
-    from org01_font import draw_text as org_draw_text
-    from org01_font import text_width as org_text_width
     DISPLAY_AVAILABLE = True
 except ImportError:
     DISPLAY_AVAILABLE = False
@@ -179,6 +177,9 @@ class OledDisplay:
             time.sleep(1.0)
             self._cmd(0xA4)
 
+            _mono = '/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf'
+            self._font_big = ImageFont.truetype(_mono, 11)
+            self._font_med = ImageFont.truetype(_mono, 9)
             print('[oled_display] Display init OK', flush=True)
         except Exception as e:
             print(f'[oled_display] Display init failed: {e}', flush=True)
@@ -221,11 +222,11 @@ class OledDisplay:
         bars = max(0, min(4, bars))
 
         body_w = 22
-        body_h = 10
+        body_h = 12
         tip_w = 2
-        tip_h = 4
+        tip_h = 6
         draw.rectangle((x, y, x + body_w - 1, y + body_h - 1), outline=0, fill=1)
-        draw.rectangle((x + body_w, y + 2, x + body_w + tip_w - 1, y + 2 + tip_h), outline=0, fill=1)
+        draw.rectangle((x + body_w, y + 3, x + body_w + tip_w - 1, y + 3 + tip_h - 1), outline=0, fill=1)
 
         inner_h = body_h - 4
         for idx in range(4):
@@ -289,26 +290,28 @@ class OledDisplay:
             draw.line((0, 32, WIDTH - 1, 32), fill=0)
             draw.line((0, 48, WIDTH - 1, 48), fill=0)
 
-            # Row 1: battery icon on the left, voltage center-left, current right
+            fb = self._font_big
+            fm = self._font_med
+
+            def rw(text, font):
+                return int(draw.textlength(text, font=font))
+
+            # Row 1: battery icon + voltage left, current right (11pt, centred in 16px row)
             self._draw_battery_icon(draw, 4, 4, battery_v)
-            org_draw_text(draw, 31, 4, bat_voltage, fill=0)
-            cur_w = self._text_width(current_text)
-            org_draw_text(draw, WIDTH - 3 - cur_w, 4, current_text, fill=0)
+            draw.text((31, 2),                             bat_voltage,  font=fb, fill=0)
+            draw.text((122 - rw(current_text, fb), 2),    current_text, font=fb, fill=0)
 
-            # Row 2: IP label on the left, IP address to the right
-            org_draw_text(draw, 3, 20, 'IP', fill=0)
-            ip_w = self._text_width(ip)
-            org_draw_text(draw, WIDTH - 3 - ip_w, 20, ip, fill=0)
+            # Row 2: IP label left, address right (9pt, centred)
+            draw.text((4, 20),                             'IP',         font=fm, fill=0)
+            draw.text((122 - rw(ip, fm), 20),             ip,           font=fm, fill=0)
 
-            # Row 3: ROS status left, ESP status right
-            org_draw_text(draw, 3, 36, ros_status, fill=0)
-            esp_w = self._text_width(esp_status)
-            org_draw_text(draw, WIDTH - 3 - esp_w, 36, esp_status, fill=0)
+            # Row 3: ROS status left, ESP status right (9pt, centred)
+            draw.text((3, 36),                             ros_status,   font=fm, fill=0)
+            draw.text((122 - rw(esp_status, fm), 36),     esp_status,   font=fm, fill=0)
 
-            # Row 4: UPTIME left, uptime value right
-            org_draw_text(draw, 3, 52, 'UPTIME', fill=0)
-            up_w = self._text_width(uptime_text)
-            org_draw_text(draw, WIDTH - 3 - up_w, 52, uptime_text, fill=0)
+            # Row 4: UPTIME left, time right (9pt, centred)
+            draw.text((3, 52),                             'UPTIME',     font=fm, fill=0)
+            draw.text((122 - rw(uptime_text, fm), 52),    uptime_text,  font=fm, fill=0)
 
             try:
                 self._show(img)
