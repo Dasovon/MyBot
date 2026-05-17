@@ -339,6 +339,7 @@ void loop() {
 
         case CONNECTED:
             rclc_executor_spin_some(&executor, RCL_MS_TO_NS(10));
+            now = millis();  // refresh: cmd_cb sets t_cmd_last inside spin; stale now would underflow CMD_TIMEOUT
 
             // Control + odom + IMU @ 30 Hz
             if (now - t_control >= 33) {
