@@ -477,10 +477,11 @@ void loop() {
                 rcl_publish(&pub_imu, &imu_msg, NULL);
             }
 
-            // Ping keep-alive every 2 s — stop motors immediately on agent loss
+            // Ping keep-alive every 2 s. Short timeout: runs while motors may be
+            // active, so a long ping stalls PID, odom, cmd processing, and OTA.
             if (now - t_ping >= 2000) {
                 t_ping = now;
-                if (rmw_uros_ping_agent(500, 3) != RMW_RET_OK) {
+                if (rmw_uros_ping_agent(200, 1) != RMW_RET_OK) {
                     pid_l.target = 0.0f; pid_r.target = 0.0f;
                     motion_armed = false;
                     zero_hold_start = 0;
