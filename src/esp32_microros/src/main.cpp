@@ -66,6 +66,7 @@ static float vel_l_filt = 0.0f, vel_r_filt = 0.0f;
 
 static constexpr float REVERSAL_COAST_VEL = 3.0f;  // rad/s: coast before reversing a rolling wheel (raised from 0.8 — EMI noise on left encoder was false-triggering)
 static float cmd_lin = 0.0f, cmd_ang = 0.0f;
+// 3s is intentional: Pi WiFi + DDS jitter can cause brief gaps; tighter values cause false disarms during Nav2 autonomous runs.
 static constexpr uint32_t CMD_TIMEOUT_MS = 3000;
 static constexpr uint32_t CMD_FRESH_FOR_PING_MS = 750;
 static constexpr uint32_t ARM_ZERO_HOLD_MS = 1000;

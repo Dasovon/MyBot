@@ -3,7 +3,7 @@ import os
 import re
 import socket
 import subprocess
-import telnetlib
+import telnetlib  # deprecated Python 3.11, removed 3.13 — replace with socket when upgrading Pi OS
 import threading
 import time
 
@@ -108,6 +108,7 @@ class OledDisplay:
         self._spi = None
         self._feed = BatteryFeed(ESP32_HOST, ESP32_PORT)
         self._node_start_t = time.monotonic()
+        self._ros_status_cache = ('ROS OFF', 0.0)
         self._init_display()
 
     def close(self):
@@ -237,6 +238,9 @@ class OledDisplay:
                 draw.rectangle((bx, y + 2, bx + 2, y + 1 + inner_h), outline=0, fill=1)
 
     def _ros_status(self):
+        now = time.monotonic()
+        if now - self._ros_status_cache[1] < 5.0:
+            return self._ros_status_cache[0]
         try:
             result = subprocess.run(
                 ['systemctl', 'is-active', 'robot-launch.service'],
@@ -245,9 +249,11 @@ class OledDisplay:
                 timeout=1.0,
                 check=False,
             )
-            return 'ROS OK' if result.stdout.strip() == 'active' else 'ROS OFF'
+            status = 'ROS OK' if result.stdout.strip() == 'active' else 'ROS OFF'
         except Exception:
-            return 'ROS OFF'
+            status = 'ROS OFF'
+        self._ros_status_cache = (status, now)
+        return status
 
     def _esp_status(self, connected, battery_voltage, battery_age_s):
         if battery_voltage is None:

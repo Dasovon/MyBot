@@ -14,10 +14,10 @@ from launch_ros.actions import Node
 def generate_launch_description():
 
     package_name = 'articubot_one'
-    esp32_serial = '/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:5C:23:1C-if00'
     enable_lidar = LaunchConfiguration('enable_lidar')
     enable_camera = LaunchConfiguration('enable_camera')
     enable_motion = LaunchConfiguration('enable_motion')
+    esp32_serial = LaunchConfiguration('esp32_serial')
 
     rsp = IncludeLaunchDescription(
                 PythonLaunchDescriptionSource([os.path.join(
@@ -81,6 +81,11 @@ def generate_launch_description():
         DeclareLaunchArgument('enable_lidar', default_value='false'),
         DeclareLaunchArgument('enable_camera', default_value='false'),
         DeclareLaunchArgument('enable_motion', default_value='false'),
+        DeclareLaunchArgument(
+            'esp32_serial',
+            default_value='/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:5C:23:1C-if00',
+            description='ESP32 serial device path (by-id path is stable across reboots)',
+        ),
         rsp,
         micro_ros_agent,
         # Delay the motion path 2s so any optional drive stack comes up after the bridge.

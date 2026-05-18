@@ -28,10 +28,11 @@ ROS 2 Humble differential drive robot. RPi 4 + ESP32-S3 (production stack — Ar
   - `robot-launch.service` now defaults to bridge-only on boot; motion is opt-in, and camera/lidar remain opt-in launch args so unplugged hardware does not kill the stack
   - `micro_ros_agent` now targets the stable USB by-id path:
     `/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:5C:23:1C-if00`
-  - **PID (fix #34)**: Kp=20, Ki=5, Kd=0, KI_MAX=10, START_PWM_SEED=55
-    - Kd removed: caused ~90% overshoot with EMA lag on ramp inputs
-    - Preseed: on 0→nonzero transition, integral preset so first tick = 55 PWM (above deadband)
-    - If robot creeps after stop → lower KI_MAX first (try 5), then Ki
+  - **PID (current: KP=28, KI=9, KD=0, KI_MAX=12, START_PWM_SEED=60, RUN_PWM_FLOOR=55)**
+    - KD=0: derivative caused ~90% overshoot with EMA lag on ramp inputs
+    - Preseed: on 0→nonzero transition, integral preset so first tick delivers START_PWM_SEED PWM
+    - RUN_PWM_FLOOR=55: sustains output above deadband during low-speed / start-hold phase
+    - If robot creeps after stop → lower KI_MAX first, then Ki
   - EMA filter: VEL_ALPHA=0.2 (suppresses left encoder EMI noise)
   - REVERSAL_COAST_VEL=3.0 rad/s
   - CMD_TIMEOUT_MS=3000ms (safety stop if publisher dies while agent alive)
@@ -291,9 +292,9 @@ I2C bus (GPIO8/9): BNO055 @ 0x28, INA219 @ 0x40 — both confirmed on bench.
 Gitignored. Create manually on every dev machine at `src/esp32_microros/**/credentials.h`:
 ```cpp
 #pragma once
-#define WIFI_SSID     "FBI-Van"
-#define WIFI_PASSWORD "RachelRyan+2017"
-#define OTA_PASSWORD  "esp32ota"
+#define WIFI_SSID     "YOUR_SSID"
+#define WIFI_PASSWORD "YOUR_PASSWORD"
+#define OTA_PASSWORD  "YOUR_OTA_PASSWORD"
 ```
 
 ### Windows ESP32 dev setup (one-time)

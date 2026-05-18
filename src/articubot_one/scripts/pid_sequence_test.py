@@ -12,7 +12,7 @@ import csv
 import math
 import os
 import re
-import socket
+import socket  # used for direct ESP32 Telnet; avoids telnetlib (deprecated 3.11, removed 3.13)
 import signal
 import sys
 import time
@@ -27,7 +27,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import BatteryState, Imu
 
 
-DEFAULT_LOG = Path("/home/ryan/dev_ws/pid_sequence_log.csv")
+DEFAULT_LOG = Path.home() / "dev_ws" / "pid_sequence_log.csv"
 
 # Topics that can drive the robot — stale CLI publishers on any of these are
 # hazardous when enable_motion:=true is active on the Pi.

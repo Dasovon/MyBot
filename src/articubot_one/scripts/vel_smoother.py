@@ -33,7 +33,7 @@ class VelSmoother(Node):
         self.declare_parameter('linear_accel', 0.5)
         self.declare_parameter('angular_accel', 1.0)
         self.declare_parameter('freq', 50.0)
-        self.declare_parameter('cmd_timeout', 3.0)
+        self.declare_parameter('cmd_timeout', 3.0)  # matches ESP32 CMD_TIMEOUT_MS; intentionally long to tolerate Pi WiFi/DDS jitter
         self.declare_parameter('startup_zero_hold', 1.0)
 
         self._lin_accel = self.get_parameter('linear_accel').value

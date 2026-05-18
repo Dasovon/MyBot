@@ -1,6 +1,9 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
 
+    <!-- Production stack uses ESP32-S3 + micro-ROS (launch_robot.launch.py).
+         This ros2_control block is retained for Gazebo simulation mode only and is not
+         loaded by the controller_manager at runtime. -->
     <xacro:unless value="$(arg sim_mode)">
         <ros2_control name="RealRobot" type="system">
             <hardware>
