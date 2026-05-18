@@ -254,6 +254,8 @@ class DriveSequenceRunner(Node):
         self._bridge_cmd_seen = False
         self._bridge_cmd_count = 0
         self._bridge_cmd_last_t = None
+        self._imu_accel_filt = 0.0   # EMA-filtered IMU accel_x (vibration suppressed)
+        self._ang_err_samples = []   # |imu_gyro_z - enc_ang| collected during motion
         self._bridge_cmd_max_gap = 0.0
         self._bridge_cmd_track_active = False
 
@@ -334,6 +336,7 @@ class DriveSequenceRunner(Node):
         self.writer.writerow(["# turn_revolutions", args.turn_revolutions])
         self.writer.writerow(["# turn_max_revolutions", args.turn_max_revolutions])
         self.writer.writerow(["# turn_extend_revolutions", args.turn_extend_revolutions])
+        self.writer.writerow(["# floor_distance_m", args.floor_distance])
         self.writer.writerow(["# turn_linear_ms", args.turn_linear])
         self.writer.writerow(["# turn_angular_rads", args.turn_angular])
         self.writer.writerow(["# turn_velocity_floor", args.turn_velocity_floor])
@@ -348,12 +351,13 @@ class DriveSequenceRunner(Node):
             "cmd_lin", "cmd_ang",
             "battery_v", "current_a", "power_w",
             "raw_vx", "raw_wz", "ekf_vx", "ekf_wz",
-            "imu_yaw_deg", "imu_gyro_z", "imu_accel_x",
+            "imu_yaw_deg", "imu_gyro_z", "imu_accel_x", "imu_accel_x_filt",
             "cmd_wheel_l", "cmd_wheel_r",
             "enc_cnt_l", "enc_cnt_r",
             "enc_tgt_l", "enc_tgt_r",
             "enc_act_l", "enc_act_r",
             "enc_filt_l", "enc_filt_r",
+            "enc_derived_lin_mps", "enc_derived_ang_rps",
             "turn_goal_cnt",
         ])
 
@@ -384,24 +388,29 @@ class DriveSequenceRunner(Node):
                     max_counts=self._turn_max_counts,
                 )
             ]
+        if args.profile == "monitor":
+            # No steps — monitor mode listens and logs; user drives with teleop.
+            return [Step(key="k", label="monitor", linear=0.0, angular=0.0, duration=86400.0, stop_hold=0.0)]
         if args.profile == "floor_baseline":
-            # Canonical 4-move floor test: fwd 1m, bwd 1m, left 360°, right 360°
+            # Canonical 4-move floor test: fwd Xm, bwd Xm, left 360°, right 360°
             # All moves run in one process to avoid DDS re-matching between invocations.
             cpr = args.turn_counts_per_rev
-            fwd_counts = max(1, int(round(cpr * 4728.0 / 1010.0)))
+            meters_per_rev = 2.0 * math.pi * WHEEL_RADIUS
+            fwd_counts = max(1, int(round(cpr * args.floor_distance / meters_per_rev)))
             spin_counts = max(1, int(round(cpr * 2659.0 / 1010.0)))
             lin = args.turn_linear
             spn = args.floor_spin_rate
             timeout = args.turn_max_time
             stop_h = args.stop_hold
+            dist_label = f"{args.floor_distance:.2f}m".rstrip("0").rstrip(".")
             self._turn_goal_counts = fwd_counts
             self._turn_max_counts = fwd_counts
             self._turn_extend_counts = 0
             return [
-                Step(key="i", label="fwd_1m",    linear=lin,  angular=0.0,  duration=timeout, stop_hold=stop_h, goal_counts=fwd_counts,  max_counts=fwd_counts),
-                Step(key=",", label="bwd_1m",    linear=-lin, angular=0.0,  duration=timeout, stop_hold=stop_h, goal_counts=fwd_counts,  max_counts=fwd_counts),
-                Step(key="j", label="left_360",  linear=0.0,  angular=spn,  duration=timeout, stop_hold=stop_h, goal_counts=spin_counts, max_counts=spin_counts),
-                Step(key="l", label="right_360", linear=0.0,  angular=-spn, duration=timeout, stop_hold=stop_h, goal_counts=spin_counts, max_counts=spin_counts),
+                Step(key="i", label=f"fwd_{dist_label}",  linear=lin,  angular=0.0,  duration=timeout, stop_hold=stop_h, goal_counts=fwd_counts,  max_counts=fwd_counts),
+                Step(key=",", label=f"bwd_{dist_label}",  linear=-lin, angular=0.0,  duration=timeout, stop_hold=stop_h, goal_counts=fwd_counts,  max_counts=fwd_counts),
+                Step(key="j", label="left_360",            linear=0.0,  angular=spn,  duration=timeout, stop_hold=stop_h, goal_counts=spin_counts, max_counts=spin_counts),
+                Step(key="l", label="right_360",           linear=0.0,  angular=-spn, duration=timeout, stop_hold=stop_h, goal_counts=spin_counts, max_counts=spin_counts),
             ]
         return build_profile(args.profile, args.duration, args.stop_hold)
 
@@ -765,13 +774,26 @@ class DriveSequenceRunner(Node):
 
         raw_vx, raw_wz = twist_values(self.latest_raw)
         ekf_vx, ekf_wz = twist_values(self.latest_ekf)
-        imu_yaw = imu_gyro_z = imu_accel_x = ""
+        imu_yaw = imu_gyro_z = imu_accel_x = imu_accel_x_filt = ""
         if self.latest_imu is not None:
             imu_yaw = yaw_from_quaternion(self.latest_imu.orientation)
             imu_gyro_z = self.latest_imu.angular_velocity.z
-            imu_accel_x = self.latest_imu.linear_acceleration.x
+            raw_accel = self.latest_imu.linear_acceleration.x
+            imu_accel_x = raw_accel
+            self._imu_accel_filt = 0.1 * raw_accel + 0.9 * self._imu_accel_filt
+            imu_accel_x_filt = self._imu_accel_filt
         with self._state_lock:
             enc = self.latest_enc or {}
+
+        filt_l = float(enc.get("filt_l", 0.0)) if enc else 0.0
+        filt_r = float(enc.get("filt_r", 0.0)) if enc else 0.0
+        enc_derived_lin = (filt_l + filt_r) * WHEEL_RADIUS / 2.0
+        enc_derived_ang = (filt_r - filt_l) * WHEEL_RADIUS / WHEEL_SEP
+        enc_derived_lin_out = enc_derived_lin if enc else ""
+        enc_derived_ang_out = enc_derived_ang if enc else ""
+
+        if self.phase == "active" and enc and imu_gyro_z != "":
+            self._ang_err_samples.append(abs(float(imu_gyro_z) - enc_derived_ang))
 
         self.writer.writerow(
             [
@@ -793,6 +815,7 @@ class DriveSequenceRunner(Node):
                 imu_yaw,
                 imu_gyro_z,
                 imu_accel_x,
+                imu_accel_x_filt,
                 cmd_wheel_l,
                 cmd_wheel_r,
                 enc.get("cnt_l", ""),
@@ -803,6 +826,8 @@ class DriveSequenceRunner(Node):
                 enc.get("act_r", ""),
                 enc.get("filt_l", ""),
                 enc.get("filt_r", ""),
+                enc_derived_lin_out,
+                enc_derived_ang_out,
                 self._turn_goal_counts,
             ]
         )
@@ -904,6 +929,7 @@ class DriveSequenceRunner(Node):
         )
         parser.add_argument("--turn-linear", type=float, default=0.20, help="linear command during one-turn test")
         parser.add_argument("--turn-angular", type=float, default=0.0, help="angular command during one-turn test")
+        parser.add_argument("--floor-distance", type=float, default=0.25, help="linear travel distance in meters for floor_baseline fwd/bwd segments (default 0.25)")
         parser.add_argument("--floor-spin-rate", type=float, default=1.5, help="angular.z speed for floor_baseline spin segments (rad/s)")
         parser.add_argument("--turn-max-time", type=float, default=120.0, help="safety timeout for one-turn test")
         parser.add_argument(
@@ -959,6 +985,12 @@ def main():
         )
         enc_ratio_l_str = f"{enc_ratio_l:.3f}" if enc_ratio_l is not None else "n/a"
         enc_ratio_r_str = f"{enc_ratio_r:.3f}" if enc_ratio_r is not None else "n/a"
+        ang_err_samples = node._ang_err_samples
+        ang_agreement_str = (
+            f"{sum(ang_err_samples)/len(ang_err_samples):.3f}"
+            if ang_err_samples
+            else "n/a"
+        )
         print(
             "summary | "
             f"min_battery={summary['min_battery_v']}V "
@@ -978,7 +1010,8 @@ def main():
             f"turn_goal_cnt={summary['turn_goal_cnt']} "
             f"bridge_cmd_count={summary['bridge_cmd_count']} "
             f"bridge_cmd_max_gap_s={summary['bridge_cmd_max_gap_s']:.3f} "
-            f"enc_ratio={enc_ratio_l_str}/{enc_ratio_r_str}",
+            f"enc_ratio={enc_ratio_l_str}/{enc_ratio_r_str} "
+            f"imu_enc_ang_err_avg={ang_agreement_str}",
             flush=True,
         )
         node.destroy_node()

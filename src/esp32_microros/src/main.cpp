@@ -164,7 +164,10 @@ static int read_telnet_char() {
     return -1;
 }
 
-static void reset_motion_state() {
+// Resets encoder counts, odometry, and PID state only.
+// Does NOT touch motion_armed, t_cmd_last, or zero_hold_start — safe to call
+// mid-run without breaking the arming state.
+static void reset_encoder_state() {
     noInterrupts();
     enc_l = 0;
     enc_r = 0;
@@ -182,6 +185,11 @@ static void reset_motion_state() {
     pid_r.target = 0.0f;
     vel_l_filt = 0.0f;
     vel_r_filt = 0.0f;
+}
+
+// Full reset — used on agent reconnect. Also disarms motion and clears cmd state.
+static void reset_motion_state() {
+    reset_encoder_state();
     cmd_lin = 0.0f;
     cmd_ang = 0.0f;
     t_cmd_last = 0;
@@ -316,8 +324,8 @@ void loop() {
 
     int c = read_telnet_char();
     if (c == 'r') {
-        reset_motion_state();
-        log("[esp32_robot] reset\n");
+        reset_encoder_state();
+        log("[esp32_robot] enc reset\n");
     }
 
     switch (state) {
@@ -469,9 +477,11 @@ void loop() {
                 imu_msg.orientation.y             = q.y();
                 imu_msg.orientation.z             = q.z();
                 imu_msg.orientation.w             = q.w();
-                imu_msg.angular_velocity.x        = av.x();
-                imu_msg.angular_velocity.y        = av.y();
-                imu_msg.angular_velocity.z        = av.z();
+                // BNO055 VECTOR_GYROSCOPE returns dps; Imu message expects rad/s
+                static constexpr float DEG2RAD = M_PI / 180.0f;
+                imu_msg.angular_velocity.x        = av.x() * DEG2RAD;
+                imu_msg.angular_velocity.y        = av.y() * DEG2RAD;
+                imu_msg.angular_velocity.z        = av.z() * DEG2RAD;
                 imu_msg.linear_acceleration.x     = la.x();
                 imu_msg.linear_acceleration.y     = la.y();
                 imu_msg.linear_acceleration.z     = la.z();
