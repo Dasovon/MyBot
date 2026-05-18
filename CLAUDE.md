@@ -95,7 +95,7 @@ carry that change forward everywhere it matters.
    - Boot animation (splash on cold start before telemetry arrives)
    - Autonomous/manual mode indicator (future — tied to Nav2 active state)
    - Motor fault / encoder health indicator (future — tied to ESP32 telemetry)
-3. **Object Tracking with OpenCV** — final tutorial chapter (ball_tracker deleted; recreate from upstream)
+3. **Object Tracking with OpenCV** — final tutorial chapter (pending)
 4. **Jetson Nano setup** (Docker + ROS 2 Humble + CUDA)
 
 ---
@@ -1058,7 +1058,7 @@ from dev machine to `/cmd_vel_raw` works (uses UDP network transport, bypasses S
 
 4. **org01_font.py** added — custom 5×5 bitmap pixel font kept in repo but not used by display node.
 
-5. **Repo cleanup** (same session): `src/ros_arduino_bridge/` → `legacy/`; deleted ina219_node.py, movement_validation.md, debug .gv/.pdf artifacts, ball_tracker files; `.gitignore` updated.
+5. **Repo cleanup** (same session): `src/ros_arduino_bridge/` → `legacy/`; deleted ina219_node.py, movement_validation.md, debug .gv/.pdf artifacts; `.gitignore` updated.
 
 **Decision**: layout is frozen. Future OLED work = features only (blinking low battery, heartbeat timeout, WiFi state, CPU temp, boot animation, mode indicators).
 
