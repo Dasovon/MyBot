@@ -60,9 +60,9 @@ static constexpr uint32_t RUN_PWM_START_HOLD_MS = 400; // sustain the floor thro
 
 // ── Velocity lowpass filter ───────────────────────────────────────────
 // EMA velocity filter: suppresses left encoder EMI noise (GPIO40/41) before PID sees it.
-// alpha=0.2 was tuned at 30Hz (T≈165ms). At 100Hz T≈50ms — if jitter returns after flashing,
-// try alpha=0.06 to restore equivalent time constant. Fix hardware (100nF caps) to remove root cause.
-static constexpr float VEL_ALPHA = 0.2f;
+// alpha=0.06 at 100Hz gives T≈167ms, matching the T≈165ms that alpha=0.2 gave at 30Hz.
+// Fix hardware (100nF caps on GPIO40/41) to remove root cause and allow raising alpha.
+static constexpr float VEL_ALPHA = 0.06f;
 static float vel_l_filt = 0.0f, vel_r_filt = 0.0f;
 
 static constexpr float REVERSAL_COAST_VEL = 3.0f;  // rad/s: coast before reversing a rolling wheel (raised from 0.8 — EMI noise on left encoder was false-triggering)
