@@ -153,6 +153,21 @@ rviz2
 
 ## Key Config Values
 
+**ESP32-S3 production stack (active)**
+
+| Parameter | Value | Source |
+|---|---|---|
+| serial transport | USB HWCDC → `/dev/serial/by-id/...` | launch_robot.launch.py |
+| baud rate | `921600` | main.cpp / launch_robot.launch.py |
+| control loop | `100` Hz motor PID, `30` Hz odom/IMU publish | main.cpp |
+| enc_counts_per_rev | `1010` | main.cpp |
+| wheel_separation | `0.179` m | main.cpp |
+| wheel_radius | `0.034` m | main.cpp |
+| PID | KP=28, KI=9, KD=0, KI_MAX=12 | main.cpp |
+| vel_smoother | 50 Hz, 0.5 m/s², 1.0 rad/s² | launch_robot.launch.py |
+
+**Gazebo / legacy Arduino sim path (ros2_control.xacro — not active on real robot)**
+
 | Parameter | Value | Source |
 |---|---|---|
 | hardware plugin | `diffdrive_arduino/DiffDriveArduinoHardware` | ros2_control.xacro |

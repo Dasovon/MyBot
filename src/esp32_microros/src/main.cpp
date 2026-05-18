@@ -60,7 +60,8 @@ static constexpr uint32_t RUN_PWM_START_HOLD_MS = 400; // sustain the floor thro
 
 // ── Velocity lowpass filter ───────────────────────────────────────────
 // EMA velocity filter: suppresses left encoder EMI noise (GPIO40/41) before PID sees it.
-// alpha=0.2 confirmed smooth turning/straight; fix hardware (100nF caps) to remove root cause.
+// alpha=0.2 was tuned at 30Hz (T≈165ms). At 100Hz T≈50ms — if jitter returns after flashing,
+// try alpha=0.06 to restore equivalent time constant. Fix hardware (100nF caps) to remove root cause.
 static constexpr float VEL_ALPHA = 0.2f;
 static float vel_l_filt = 0.0f, vel_r_filt = 0.0f;
 
@@ -240,6 +241,12 @@ static bool create_entities() {
     imu_msg.header.frame_id  = {frame_imu,  strlen(frame_imu),  sizeof(frame_imu)};
     bat_msg.header.frame_id  = {frame_bat,  strlen(frame_bat),  sizeof(frame_bat)};
 
+    odom_msg.pose.covariance[0]  = 0.001;  // x variance
+    odom_msg.pose.covariance[7]  = 0.001;  // y variance
+    odom_msg.pose.covariance[35] = 0.001;  // yaw variance
+    odom_msg.twist.covariance[0]  = 0.001; // vx variance
+    odom_msg.twist.covariance[35] = 0.001; // omega variance
+
     imu_msg.orientation_covariance[0]         = -1.0;  // EKF ignores orientation
     imu_msg.angular_velocity_covariance[0]    = 0.001;
     imu_msg.angular_velocity_covariance[4]    = 0.001;
@@ -248,8 +255,7 @@ static bool create_entities() {
     imu_msg.linear_acceleration_covariance[4] = 0.01;
     imu_msg.linear_acceleration_covariance[8] = 0.01;
 
-    bat_msg.present              = true;
-    bat_msg.power_supply_status  = 2;  // POWER_SUPPLY_STATUS_DISCHARGING
+    bat_msg.present = true;
 
     return true;
 }
@@ -270,7 +276,9 @@ static void destroy_entities() {
 static void wifi_setup() {
     WiFi.mode(WIFI_STA);
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    while (WiFi.status() != WL_CONNECTED) { delay(500); }
+    // 10s timeout — micro-ROS over USB does not need WiFi; OTA/TelnetStream simply won't be available if router is down
+    uint32_t t = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - t < 10000) { delay(500); }
 }
 
 static void ota_setup() {
@@ -526,6 +534,7 @@ void loop() {
         float i_A = ina.getCurrent_mA() * 0.001f;
         bat_msg.voltage = v;
         bat_msg.current = i_A;
+        bat_msg.power_supply_status = (i_A > 0.05f) ? 1 : 2;  // 1=CHARGING (i>0), 2=DISCHARGING
         if (state == CONNECTED) {
             rcl_publish(&pub_bat, &bat_msg, NULL);
         }

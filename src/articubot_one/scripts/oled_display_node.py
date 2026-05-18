@@ -212,9 +212,6 @@ class OledDisplay:
             return f'{hours:d}:{minutes:02d}:{seconds:02d}'
         return f'{minutes:02d}:{seconds:02d}'
 
-    def _text_width(self, text):
-        return org_text_width(text)
-
     def _draw_battery_icon(self, draw, x, y, voltage):
         if voltage is None:
             bars = 0
