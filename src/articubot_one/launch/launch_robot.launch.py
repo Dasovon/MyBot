@@ -55,7 +55,7 @@ def generate_launch_description():
     micro_ros_agent = Node(
         package='micro_ros_agent',
         executable='micro_ros_agent',
-        arguments=['serial', '--dev', esp32_serial],
+        arguments=['serial', '--dev', esp32_serial, '-b', '921600'],
         output='screen',
     )
 

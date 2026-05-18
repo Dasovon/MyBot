@@ -27,3 +27,6 @@ src/esp32_microros/**/credentials.h
 # PlatformIO build cache and VS Code intellisense db
 src/esp32_microros/**/.pio/
 src/esp32_microros/**/.vscode/
+
+# Backup files — git is version control; .bak files have no place in the repo
+*.bak.*

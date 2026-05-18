@@ -301,7 +301,7 @@ void setup() {
     bno.setExtCrystalUse(true);
     ina.begin();
 
-    Serial.begin(115200);
+    Serial.begin(921600);
     delay(500);
     wifi_setup();
     ota_setup();
@@ -314,10 +314,15 @@ void setup() {
 }
 
 // ── Loop timers ───────────────────────────────────────────────────────
-static uint32_t t_control = 0;
-static uint8_t  log_tick  = 0;   // log every control tick for count-threshold tests
-static uint32_t t_battery = 0;
-static uint32_t t_ping    = 0;
+static constexpr uint32_t CONTROL_PERIOD_MS  = 10;   // 100 Hz motor PID
+static constexpr uint32_t ODOM_IMU_PERIOD_MS = 33;   // ~30 Hz odom/IMU publish (decoupled from PID)
+static constexpr uint32_t LOG_PERIOD_MS      = 200;  // 5 Hz telnet logging
+
+static uint32_t t_control  = 0;
+static uint32_t t_odom_imu = 0;
+static uint32_t t_log      = 0;
+static uint32_t t_battery  = 0;
+static uint32_t t_ping     = 0;
 
 void loop() {
     ArduinoOTA.handle();
@@ -337,7 +342,7 @@ void loop() {
                 if (create_entities()) {
                     rmw_uros_sync_session(1000);
                     reset_motion_state();
-                    t_control = now; t_battery = now; t_ping = now;
+                    t_control = now; t_odom_imu = now; t_log = now; t_battery = now; t_ping = now;
                     state = CONNECTED;
                     log("[esp32_robot] connected\n");
                 }
@@ -348,11 +353,11 @@ void loop() {
             break;
 
         case CONNECTED:
-            rclc_executor_spin_some(&executor, RCL_MS_TO_NS(10));
+            rclc_executor_spin_some(&executor, RCL_MS_TO_NS(1));
             now = millis();  // refresh: cmd_cb sets t_cmd_last inside spin; stale now would underflow CMD_TIMEOUT
 
-            // Control + odom + IMU @ 30 Hz
-            if (now - t_control >= 33) {
+            // Motor PID @ 100 Hz
+            if (now - t_control >= CONTROL_PERIOD_MS) {
                 float dt = (now - t_control) * 0.001f;
                 t_control = now;
 
@@ -409,13 +414,8 @@ void loop() {
                     pid_l.integral = 0.0f;
                     pid_r.integral = 0.0f;
                     motors_stop();
-                    if (++log_tick >= 1) {
-                        log_tick = 0;
-                        log("[enc] cnt=%ld/%ld tgt=0.00/0.00 act=%.2f/%.2f filt=%.2f/%.2f\n",
-                            l, r, vel_l, vel_r, vel_l_filt, vel_r_filt);
-                    }
                 } else {
-                    // Commands arrive directly from twist_mux on the Pi; the ESP32 applies its own
+                    // Commands arrive directly from vel_smoother on the Pi; the ESP32 applies its own
                     // start preseed, timeout, and reversal-coast handling here.
                     float tl = (cmd_lin - cmd_ang * WHEEL_SEP * 0.5f) / WHEEL_RADIUS;
                     float tr = (cmd_lin + cmd_ang * WHEEL_SEP * 0.5f) / WHEEL_RADIUS;
@@ -440,13 +440,10 @@ void loop() {
                     int pwm_r = pid_compute(pid_r, vel_r_filt, dt);
                     motor_set(PWMB_CH, BIN1, BIN2, pwm_l);
                     motor_set(PWMA_CH, AIN1, AIN2, pwm_r);
-                    if (++log_tick >= 1) {
-                        log_tick = 0;
-                        log("[enc] cnt=%ld/%ld tgt=%.2f/%.2f act=%.2f/%.2f filt=%.2f/%.2f\n",
-                            l, r, pid_l.target, pid_r.target, vel_l, vel_r, vel_l_filt, vel_r_filt);
-                    }
                 }
 
+                // Accumulate odometry every control tick — must stay in 100Hz block;
+                // moving this inside the 30Hz publish gate would discard ~67% of encoder counts.
                 float dist_l = (float)dl * COUNTS_TO_RAD * WHEEL_RADIUS;
                 float dist_r = (float)dr * COUNTS_TO_RAD * WHEEL_RADIUS;
                 float dist   = (dist_l + dist_r) * 0.5f;
@@ -454,6 +451,22 @@ void loop() {
                 odom_x  += dist * cosf(odom_th + dth * 0.5f);
                 odom_y  += dist * sinf(odom_th + dth * 0.5f);
                 odom_th += dth;
+
+                if (now - t_log >= LOG_PERIOD_MS) {
+                    t_log = now;
+                    if (!motion_armed) {
+                        log("[enc] cnt=%ld/%ld tgt=0.00/0.00 act=%.2f/%.2f filt=%.2f/%.2f\n",
+                            l, r, vel_l, vel_r, vel_l_filt, vel_r_filt);
+                    } else {
+                        log("[enc] cnt=%ld/%ld tgt=%.2f/%.2f act=%.2f/%.2f filt=%.2f/%.2f\n",
+                            l, r, pid_l.target, pid_r.target, vel_l, vel_r, vel_l_filt, vel_r_filt);
+                    }
+                }
+            }
+
+            // Odom + IMU publish @ ~30 Hz — decoupled from motor PID
+            if (now - t_odom_imu >= ODOM_IMU_PERIOD_MS) {
+                t_odom_imu = now;
 
                 int64_t  ts  = rmw_uros_epoch_nanos();
                 int32_t  sec = (int32_t)(ts / 1000000000LL);
@@ -465,8 +478,8 @@ void loop() {
                 odom_msg.pose.pose.position.y      = odom_y;
                 odom_msg.pose.pose.orientation.z   = sinf(odom_th * 0.5f);
                 odom_msg.pose.pose.orientation.w   = cosf(odom_th * 0.5f);
-                odom_msg.twist.twist.linear.x      = (vel_l + vel_r) * 0.5f * WHEEL_RADIUS;
-                odom_msg.twist.twist.angular.z     = (vel_r - vel_l) * WHEEL_RADIUS / WHEEL_SEP;
+                odom_msg.twist.twist.linear.x      = (vel_l_filt + vel_r_filt) * 0.5f * WHEEL_RADIUS;
+                odom_msg.twist.twist.angular.z     = (vel_r_filt - vel_l_filt) * WHEEL_RADIUS / WHEEL_SEP;
                 rcl_publish(&pub_odom, &odom_msg, NULL);
 
                 imu::Quaternion q  = bno.getQuat();
