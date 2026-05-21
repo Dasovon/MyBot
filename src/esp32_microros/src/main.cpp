@@ -211,12 +211,21 @@ static void reset_motion_state() {
 }
 
 // ── cmd_vel callback ──────────────────────────────────────────────────
+static uint32_t t_prev_cmd_cb = 0;
+static uint32_t cmd_cb_max_gap_ms = 0;
+
 static void cmd_cb(const void* msg) {
     const auto* m = (const geometry_msgs__msg__Twist*)msg;
     cmd_lin = m->linear.x;
     cmd_ang = m->angular.z;
-    t_cmd_last = millis();
+    uint32_t now_ms = millis();
+    if (t_prev_cmd_cb > 0 && now_ms - t_prev_cmd_cb > cmd_cb_max_gap_ms) {
+        cmd_cb_max_gap_ms = now_ms - t_prev_cmd_cb;
+    }
+    t_prev_cmd_cb = now_ms;
+    t_cmd_last = now_ms;
     log("[cmd] lin=%.3f ang=%.3f armed=%d\n", cmd_lin, cmd_ang, motion_armed ? 1 : 0);
+    TelnetStream.flush();  // force TCP send so bridge_cmd_max_gap measures real DDS timing
 }
 
 // ── micro-ROS entity management ───────────────────────────────────────
@@ -348,6 +357,8 @@ void loop() {
     int c = read_telnet_char();
     if (c == 'r') {
         reset_encoder_state();
+        cmd_cb_max_gap_ms = 0;
+        t_prev_cmd_cb = 0;
         log("[esp32_robot] enc reset\n");
     }
 
@@ -483,11 +494,11 @@ void loop() {
                 if (now - t_log >= LOG_PERIOD_MS) {
                     t_log = now;
                     if (!motion_armed) {
-                        log("[enc] cnt=%ld/%ld tgt=0.00/0.00 act=%.2f/%.2f filt=%.2f/%.2f\n",
-                            l, r, vel_l, vel_r, vel_l_filt, vel_r_filt);
+                        log("[enc] cnt=%ld/%ld tgt=0.00/0.00 act=%.2f/%.2f filt=%.2f/%.2f gap=%lums\n",
+                            l, r, vel_l, vel_r, vel_l_filt, vel_r_filt, (unsigned long)cmd_cb_max_gap_ms);
                     } else {
-                        log("[enc] cnt=%ld/%ld tgt=%.2f/%.2f act=%.2f/%.2f filt=%.2f/%.2f\n",
-                            l, r, pid_l.target, pid_r.target, vel_l, vel_r, vel_l_filt, vel_r_filt);
+                        log("[enc] cnt=%ld/%ld tgt=%.2f/%.2f act=%.2f/%.2f filt=%.2f/%.2f gap=%lums\n",
+                            l, r, pid_l.target, pid_r.target, vel_l, vel_r, vel_l_filt, vel_r_filt, (unsigned long)cmd_cb_max_gap_ms);
                     }
                 }
             }

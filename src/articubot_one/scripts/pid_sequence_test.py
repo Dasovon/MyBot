@@ -85,6 +85,7 @@ ENC_LINE_RE = re.compile(
     r"tgt=(?P<tgt_l>-?\d+(?:\.\d+)?)/(?P<tgt_r>-?\d+(?:\.\d+)?)\s+"
     r"act=(?P<act_l>-?\d+(?:\.\d+)?)/(?P<act_r>-?\d+(?:\.\d+)?)\s+"
     r"filt=(?P<filt_l>-?\d+(?:\.\d+)?)/(?P<filt_r>-?\d+(?:\.\d+)?)"
+    r"(?:\s+gap=(?P<fw_gap_ms>\d+)ms)?"
 )
 CMD_LINE_RE = re.compile(
     r"\[cmd\]\s+lin=(?P<lin>-?\d+(?:\.\d+)?)\s+ang=(?P<ang>-?\d+(?:\.\d+)?)\s+armed=(?P<armed>[01])"
@@ -257,6 +258,7 @@ class DriveSequenceRunner(Node):
         self._imu_accel_filt = 0.0   # EMA-filtered IMU accel_x (vibration suppressed)
         self._ang_err_samples = []   # |imu_gyro_z - enc_ang| collected during motion
         self._bridge_cmd_max_gap = 0.0
+        self._fw_cmd_gap_ms = 0  # firmware-measured max cmd_cb gap (ms)
 
         # Per-step IMU tracking (reset each time active phase starts)
         self._step_yaw_start: float | None = None
@@ -472,6 +474,9 @@ class DriveSequenceRunner(Node):
                 self.summary["max_abs_enc_act_r"] = max(self.summary["max_abs_enc_act_r"], abs(sample["act_r"]))
                 self.summary["max_abs_enc_filt_l"] = max(self.summary["max_abs_enc_filt_l"], abs(sample["filt_l"]))
                 self.summary["max_abs_enc_filt_r"] = max(self.summary["max_abs_enc_filt_r"], abs(sample["filt_r"]))
+            fw_gap = sample.get("fw_gap_ms")
+            if fw_gap is not None:
+                self._fw_cmd_gap_ms = max(self._fw_cmd_gap_ms, int(fw_gap))
 
     def _update_cmd_sample(self, sample):
         with self._state_lock:
@@ -546,6 +551,7 @@ class DriveSequenceRunner(Node):
                                         }
                                     )
                                 continue
+                            fw_gap_ms = match.group("fw_gap_ms")
                             self._update_encoder_sample(
                                 {
                                     "cnt_l": int(match.group("cnt_l")) if match.group("cnt_l") is not None else None,
@@ -556,6 +562,7 @@ class DriveSequenceRunner(Node):
                                     "act_r": float(match.group("act_r")),
                                     "filt_l": float(match.group("filt_l")),
                                     "filt_r": float(match.group("filt_r")),
+                                    "fw_gap_ms": int(fw_gap_ms) if fw_gap_ms is not None else None,
                                 }
                             )
                     with self._enc_sock_lock:
@@ -1066,6 +1073,7 @@ def main():
             f"turn_goal_cnt={summary['turn_goal_cnt']} "
             f"bridge_cmd_count={summary['bridge_cmd_count']} "
             f"bridge_cmd_max_gap_s={summary['bridge_cmd_max_gap_s']:.3f} "
+            f"fw_cmd_gap_ms={node._fw_cmd_gap_ms} "
             f"enc_ratio={enc_ratio_l_str}/{enc_ratio_r_str} "
             f"imu_enc_ang_err_avg={ang_agreement_str}",
             flush=True,
