@@ -403,32 +403,33 @@ class DriveSequenceRunner(Node):
             # No steps — monitor mode listens and logs; user drives with teleop.
             return [Step(key="k", label="monitor", linear=0.0, angular=0.0, duration=86400.0, stop_hold=0.0)]
         if args.profile == "floor_baseline":
-            # Canonical 4-move floor test: fwd Xm, bwd Xm, left 360°, right 360°
+            # Canonical 4-move floor test: fwd Xm, bwd Xm, left N×360°, right N×360°
             # All moves run in one process to avoid DDS re-matching between invocations.
-            # Step timing is kinematics-derived so the test is robust when the telnet
-            # enc monitor is unreliable (dropping/reconnecting). The enc monitor still
-            # runs and logs velocity data, but does not control the stop condition.
+            # Spin steps are encoder-count-based: they terminate when both wheels have
+            # accumulated the target count, regardless of PID tracking speed.
+            # Fwd/bwd steps remain time-based (no encoder reset between them).
             lin = args.turn_linear
             spn = args.floor_spin_rate
             rotations = args.floor_spin_rotations
             stop_h = args.stop_hold
             dist_label = f"{args.floor_distance:.2f}m".rstrip("0").rstrip(".")
             rot_label  = f"{rotations:.0f}x360" if rotations != 1 else "360"
-            # vel_smoother ramp rates (match launch_robot.launch.py vel_smoother params)
-            lin_accel = 0.5   # m/s²
-            ang_accel = 1.0   # rad/s²
-            # Correct kinematic formula: active phase covers ramp-up + cruise.
-            # During ramp (t_ramp = spn/ang_accel), only half the angle of a
-            # constant-speed ramp is covered.  The deficit = spn/(2*ang_accel) extra
-            # cruise time to compensate.  Decel is an abrupt snap-to-zero from
-            # vel_smoother, so no decel term is needed here.
+            lin_accel = 0.5   # m/s² — match vel_smoother linear_accel
+            ang_accel = 1.0   # rad/s² — match vel_smoother angular_accel
             fwd_time  = args.floor_distance / lin + lin / (2.0 * lin_accel)
+            # Spin timeout: 2× the kinematic time so count-based stop is never pre-empted
             spin_time = rotations * 2.0 * math.pi / spn + spn / (2.0 * ang_accel)
+            # Encoder counts for N body rotations:
+            #   one body rotation = (WHEEL_SEP/2) / WHEEL_RADIUS wheel rotations
+            #   × counts_per_rev encoder counts
+            _WHEEL_SEP    = 0.179  # m — must match CLAUDE.md hardware constants
+            _WHEEL_RADIUS = 0.034  # m
+            spin_counts = int(rotations * (_WHEEL_SEP / 2.0 / _WHEEL_RADIUS) * args.turn_counts_per_rev)
             return [
-                Step(key="i", label=f"fwd_{dist_label}",       linear=lin,  angular=0.0,  duration=fwd_time,  stop_hold=stop_h, goal_counts=0),
-                Step(key=",", label=f"bwd_{dist_label}",       linear=-lin, angular=0.0,  duration=fwd_time,  stop_hold=stop_h, goal_counts=0),
-                Step(key="j", label=f"left_{rot_label}",        linear=0.0,  angular=spn,  duration=spin_time, stop_hold=stop_h, goal_counts=0),
-                Step(key="l", label=f"right_{rot_label}",       linear=0.0,  angular=-spn, duration=spin_time, stop_hold=stop_h, goal_counts=0),
+                Step(key="i", label=f"fwd_{dist_label}",   linear=lin,  angular=0.0,  duration=fwd_time,      stop_hold=stop_h, goal_counts=0),
+                Step(key=",", label=f"bwd_{dist_label}",   linear=-lin, angular=0.0,  duration=fwd_time,      stop_hold=stop_h, goal_counts=0),
+                Step(key="j", label=f"left_{rot_label}",   linear=0.0,  angular=spn,  duration=spin_time*2.0, stop_hold=stop_h, goal_counts=spin_counts),
+                Step(key="l", label=f"right_{rot_label}",  linear=0.0,  angular=-spn, duration=spin_time*2.0, stop_hold=stop_h, goal_counts=spin_counts),
             ]
         return build_profile(args.profile, args.duration, args.stop_hold)
 
