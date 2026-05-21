@@ -48,10 +48,10 @@ static constexpr float COUNTS_TO_RAD = (2.0f * M_PI) / ENC_CPR;
 // Ki=5 + preseed: preseed sets integral so first tick delivers START_PWM_SEED PWM,
 //   overcoming motor deadband instantly without the overshoot that Kd caused.
 // Ki then handles steady-state tracking error.
-static constexpr float KP            =  28.0f;
+static constexpr float KP            =  55.0f;
 static constexpr float KD            =   0.0f;
-static constexpr float KI            =   9.0f;
-static constexpr float KI_MAX        =  12.0f;
+static constexpr float KI            =  15.0f;
+static constexpr float KI_MAX        =  40.0f;
 static constexpr float START_PWM_SEED =  60.0f;  // PWM at first tick from standstill
 static constexpr float RUN_PWM_FLOOR  =  55.0f;    // keep any active command above the deadband while target is nonzero
 static constexpr float RUN_PWM_FLOOR_ACTUAL = 2.0f; // rad/s: only apply the floor while the wheel is still in the low-speed band
@@ -59,13 +59,22 @@ static constexpr uint32_t RUN_PWM_START_HOLD_MS = 400; // sustain the floor thro
 
 
 // ── Velocity lowpass filter ───────────────────────────────────────────
-// EMA velocity filter: suppresses left encoder EMI noise (GPIO40/41) before PID sees it.
-// alpha=0.06 at 100Hz gives T≈167ms, matching the T≈165ms that alpha=0.2 gave at 30Hz.
-// Fix hardware (100nF caps on GPIO40/41) to remove root cause and allow raising alpha.
-static constexpr float VEL_ALPHA = 0.06f;
+// EMA velocity filter: light smoothing for encoder quantization noise.
+// alpha=0.3 at 100Hz gives T≈33ms — low lag, TB6612 ground now properly connected
+// so EMI noise on left encoder is eliminated at source.
+static constexpr float VEL_ALPHA = 0.3f;
 static float vel_l_filt = 0.0f, vel_r_filt = 0.0f;
 
-static constexpr float REVERSAL_COAST_VEL = 3.0f;  // rad/s: coast before reversing a rolling wheel (raised from 0.8 — EMI noise on left encoder was false-triggering)
+// ── IMU outer-loop angular correction ────────────────────────────────
+// Uses BNO055 gyro_z to correct the per-wheel PID targets every 100Hz tick.
+// For linear moves: keeps heading straight (cmd_ang=0, gyro_z≠0 → differential correction).
+// For spins: makes actual chassis rotation track commanded angular rate.
+// K_ANG_OUTER converts angular velocity error (rad/s) to per-wheel target offset (rad/s).
+// Physical coupling factor = WHEEL_SEP/(2*WHEEL_RADIUS) ≈ 2.63; start at 0.5 and tune up.
+static constexpr float K_ANG_OUTER = 0.5f;
+static float gyro_z_filt = 0.0f;  // latest BNO055 gyro Z (rad/s), updated at 30Hz
+
+static constexpr float REVERSAL_COAST_VEL = 0.5f;  // rad/s: coast before reversing a rolling wheel
 static float cmd_lin = 0.0f, cmd_ang = 0.0f;
 // 3s is intentional: Pi WiFi + DDS jitter can cause brief gaps; tighter values cause false disarms during Nav2 autonomous runs.
 static constexpr uint32_t CMD_TIMEOUT_MS = 3000;
@@ -428,6 +437,17 @@ void loop() {
                     float tl = (cmd_lin - cmd_ang * WHEEL_SEP * 0.5f) / WHEEL_RADIUS;
                     float tr = (cmd_lin + cmd_ang * WHEEL_SEP * 0.5f) / WHEEL_RADIUS;
 
+                    // IMU outer-loop: correct tl/tr so actual chassis angular velocity
+                    // matches the commanded angular velocity (from BNO055 gyro_z).
+                    // Only active when the robot has a motion command — suppressed during
+                    // stops so bumping or lifting the robot does not trigger motor output.
+                    if (fabsf(cmd_lin) > 0.01f || fabsf(cmd_ang) > 0.01f) {
+                        float ang_err  = cmd_ang - gyro_z_filt;
+                        float ang_corr = K_ANG_OUTER * ang_err * WHEEL_SEP * 0.5f / WHEEL_RADIUS;
+                        tl -= ang_corr;
+                        tr += ang_corr;
+                    }
+
                     // Preseed integral on rest→move transition so first tick delivers
                     // START_PWM_SEED PWM — overcomes motor deadband without Kd overshoot.
                     auto preseed = [&](PID& p, float nt) {
@@ -504,6 +524,8 @@ void loop() {
                 imu_msg.angular_velocity.x        = av.x() * DEG2RAD;
                 imu_msg.angular_velocity.y        = av.y() * DEG2RAD;
                 imu_msg.angular_velocity.z        = av.z() * DEG2RAD;
+                // Keep filtered gyro_z for the 100Hz outer-loop correction
+                gyro_z_filt = 0.7f * gyro_z_filt + 0.3f * (av.z() * DEG2RAD);
                 imu_msg.linear_acceleration.x     = la.x();
                 imu_msg.linear_acceleration.y     = la.y();
                 imu_msg.linear_acceleration.z     = la.z();

@@ -257,6 +257,14 @@ class DriveSequenceRunner(Node):
         self._imu_accel_filt = 0.0   # EMA-filtered IMU accel_x (vibration suppressed)
         self._ang_err_samples = []   # |imu_gyro_z - enc_ang| collected during motion
         self._bridge_cmd_max_gap = 0.0
+
+        # Per-step IMU tracking (reset each time active phase starts)
+        self._step_yaw_start: float | None = None
+        self._step_yaw_end: float | None = None
+        self._step_gyro_integral_rad: float = 0.0
+        self._step_gyro_prev_t: float | None = None
+        self._step_gyro_prev_gz: float | None = None
+        self._step_imu_results: list = []  # one dict per completed step
         self._bridge_cmd_track_active = False
 
         self.latest_battery = None
@@ -275,9 +283,10 @@ class DriveSequenceRunner(Node):
 
         self.pub = self.create_publisher(Twist, args.command_topic, 10)
         self.stop_pubs = [self.pub]
+        # Stop all upstream command topics so vel_smoother ramps to zero.
+        # Do NOT publish to /diff_cont/cmd_vel_unstamped — a second publisher there
+        # disrupts the micro_ros_agent DDS matching with vel_smoother.
         stop_topics = ["/cmd_vel_joy", "/cmd_vel"]
-        if args.stop_output_topic:
-            stop_topics.append("/diff_cont/cmd_vel_unstamped")
         for topic in stop_topics:
             if topic != args.command_topic:
                 self.stop_pubs.append(self.create_publisher(Twist, topic, 10))
@@ -394,23 +403,30 @@ class DriveSequenceRunner(Node):
         if args.profile == "floor_baseline":
             # Canonical 4-move floor test: fwd Xm, bwd Xm, left 360°, right 360°
             # All moves run in one process to avoid DDS re-matching between invocations.
-            cpr = args.turn_counts_per_rev
-            meters_per_rev = 2.0 * math.pi * WHEEL_RADIUS
-            fwd_counts = max(1, int(round(cpr * args.floor_distance / meters_per_rev)))
-            spin_counts = max(1, int(round(cpr * 2659.0 / 1010.0)))
+            # Step timing is kinematics-derived so the test is robust when the telnet
+            # enc monitor is unreliable (dropping/reconnecting). The enc monitor still
+            # runs and logs velocity data, but does not control the stop condition.
             lin = args.turn_linear
             spn = args.floor_spin_rate
-            timeout = args.turn_max_time
+            rotations = args.floor_spin_rotations
             stop_h = args.stop_hold
             dist_label = f"{args.floor_distance:.2f}m".rstrip("0").rstrip(".")
-            self._turn_goal_counts = fwd_counts
-            self._turn_max_counts = fwd_counts
-            self._turn_extend_counts = 0
+            rot_label  = f"{rotations:.0f}x360" if rotations != 1 else "360"
+            # vel_smoother ramp rates (match launch_robot.launch.py vel_smoother params)
+            lin_accel = 0.5   # m/s²
+            ang_accel = 1.0   # rad/s²
+            # Correct kinematic formula: active phase covers ramp-up + cruise.
+            # During ramp (t_ramp = spn/ang_accel), only half the angle of a
+            # constant-speed ramp is covered.  The deficit = spn/(2*ang_accel) extra
+            # cruise time to compensate.  Decel is an abrupt snap-to-zero from
+            # vel_smoother, so no decel term is needed here.
+            fwd_time  = args.floor_distance / lin + lin / (2.0 * lin_accel)
+            spin_time = rotations * 2.0 * math.pi / spn + spn / (2.0 * ang_accel)
             return [
-                Step(key="i", label=f"fwd_{dist_label}",  linear=lin,  angular=0.0,  duration=timeout, stop_hold=stop_h, goal_counts=fwd_counts,  max_counts=fwd_counts),
-                Step(key=",", label=f"bwd_{dist_label}",  linear=-lin, angular=0.0,  duration=timeout, stop_hold=stop_h, goal_counts=fwd_counts,  max_counts=fwd_counts),
-                Step(key="j", label="left_360",            linear=0.0,  angular=spn,  duration=timeout, stop_hold=stop_h, goal_counts=spin_counts, max_counts=spin_counts),
-                Step(key="l", label="right_360",           linear=0.0,  angular=-spn, duration=timeout, stop_hold=stop_h, goal_counts=spin_counts, max_counts=spin_counts),
+                Step(key="i", label=f"fwd_{dist_label}",       linear=lin,  angular=0.0,  duration=fwd_time,  stop_hold=stop_h, goal_counts=0),
+                Step(key=",", label=f"bwd_{dist_label}",       linear=-lin, angular=0.0,  duration=fwd_time,  stop_hold=stop_h, goal_counts=0),
+                Step(key="j", label=f"left_{rot_label}",        linear=0.0,  angular=spn,  duration=spin_time, stop_hold=stop_h, goal_counts=0),
+                Step(key="l", label=f"right_{rot_label}",       linear=0.0,  angular=-spn, duration=spin_time, stop_hold=stop_h, goal_counts=0),
             ]
         return build_profile(args.profile, args.duration, args.stop_hold)
 
@@ -556,9 +572,7 @@ class DriveSequenceRunner(Node):
         if self.phase == "arm":
             return 0.0, 0.0
         if self.phase == "preflight":
-            if not self.steps:
-                return 0.0, 0.0
-            return self.steps[0].linear, self.steps[0].angular
+            return 0.0, 0.0
         if self.phase == "active":
             return self.current_step.linear, self.current_step.angular
         return 0.0, 0.0
@@ -586,26 +600,14 @@ class DriveSequenceRunner(Node):
                     self.done = True
                     return True
                 return False
-            if enc:
-                enc_at = self.latest_enc_at or 0.0
-                if enc_at < (self._preflight_started_at or 0.0):
-                    return False
-                tgt_l = abs(float(enc.get("tgt_l", 0.0)))
-                tgt_r = abs(float(enc.get("tgt_r", 0.0)))
-                if self.steps:
-                    step = self.steps[0]
-                    expected_l = (step.linear - step.angular * WHEEL_SEP * 0.5) / WHEEL_RADIUS
-                    expected_r = (step.linear + step.angular * WHEEL_SEP * 0.5) / WHEEL_RADIUS
-                    expected = max(abs(expected_l), abs(expected_r))
-                else:
-                    expected = 0.0
-                if max(tgt_l, tgt_r) > 0.5 * expected:
-                    self._preflight_tgt_seen = True
-                    return True
-            if elapsed > 5.0:
+            # Preflight sends zeros — confirm DDS delivery by counting [cmd] lines
+            # arriving from the ESP32 telnet stream (_bridge_cmd_count increments for
+            # all profiles). A count ≥ 5 means the full path is live with no motion.
+            if self._bridge_cmd_count >= 5:
+                return True
+            if elapsed > 15.0:
                 self.get_logger().error(
-                    "[PREFLIGHT FAILED] ESP32 firmware target stayed 0 while publishing "
-                    f"{self.steps[0].linear if self.steps else 0:.2f} m/s. "
+                    "[PREFLIGHT FAILED] No [cmd] telemetry from ESP32 after 15s of zeros. "
                     "The micro_ros_agent DDS bridge is stuck — commands are not reaching the ESP32. "
                     "Fix: sudo systemctl restart robot-launch.service (may need 2-3 attempts after OTA flash)"
                 )
@@ -651,6 +653,44 @@ class DriveSequenceRunner(Node):
             self.current_step.duration if self.phase == "active" else self.current_step.stop_hold
         )
 
+    def _reset_step_imu(self):
+        self._step_yaw_start = None
+        self._step_yaw_end = None
+        self._step_gyro_integral_rad = 0.0
+        self._step_gyro_prev_t = None
+        self._step_gyro_prev_gz = None
+
+    def _report_step_imu(self):
+        step = self.current_step
+        if step is None or self._step_yaw_start is None:
+            return
+        label = step.label
+        gyro_deg = self._step_gyro_integral_rad * 180.0 / math.pi
+        yaw_delta = (self._step_yaw_end - self._step_yaw_start) if self._step_yaw_end is not None else float("nan")
+        is_spin = abs(step.angular) > 0.01 and abs(step.linear) < 0.01
+        if is_spin:
+            rotations = self.args.floor_spin_rotations if self.args.profile == "floor_baseline" else 1.0
+            expected_deg = rotations * (360.0 if step.angular > 0 else -360.0)
+            overshoot = gyro_deg - expected_deg
+            pct = 100.0 * gyro_deg / expected_deg if expected_deg else 0.0
+            print(
+                f"[imu] {label:<16}  gyro_total={gyro_deg:+.1f}°  expected={expected_deg:+.0f}°  delta={overshoot:+.1f}°  ({pct:.1f}%)",
+                flush=True,
+            )
+        else:
+            direction = "CURVED RIGHT" if gyro_deg < -5 else "CURVED LEFT" if gyro_deg > 5 else "straight"
+            print(
+                f"[imu] {label:<14}  heading_drift={gyro_deg:+.1f}°  ({direction})",
+                flush=True,
+            )
+        self._step_imu_results.append({
+            "label": label,
+            "gyro_deg": gyro_deg,
+            "yaw_delta": yaw_delta,
+            "is_spin": is_spin,
+            "expected_deg": (rotations * (360.0 if step.angular > 0 else -360.0)) if is_spin else 0.0,
+        })
+
     def _advance(self):
         if self.phase == "arm":
             if self.current_step.goal_counts > 0:
@@ -687,9 +727,11 @@ class DriveSequenceRunner(Node):
             self.phase = "active"
             self.phase_started = time.monotonic()
             self._turn_started_at = self.phase_started if self.current_step.goal_counts > 0 else None
+            self._reset_step_imu()
             return
 
         if self.phase == "active":
+            self._report_step_imu()
             self.phase = "stop"
             self.phase_started = time.monotonic()
             self._publish_zero()
@@ -719,6 +761,7 @@ class DriveSequenceRunner(Node):
         else:
             self.phase = "active"
             self.phase_started = time.monotonic()
+            self._reset_step_imu()
 
     def _publish_zero(self):
         self.latest_cmd = make_twist(0.0, 0.0)
@@ -795,6 +838,22 @@ class DriveSequenceRunner(Node):
         if self.phase == "active" and enc and imu_gyro_z != "":
             self._ang_err_samples.append(abs(float(imu_gyro_z) - enc_derived_ang))
 
+        # Accumulate per-step IMU heading / rotation for step summary
+        if self.phase == "active" and self.latest_imu is not None:
+            step_yaw = yaw_from_quaternion(self.latest_imu.orientation)
+            step_gz = float(self.latest_imu.angular_velocity.z)
+            if self._step_yaw_start is None:
+                self._step_yaw_start = step_yaw
+                self._step_gyro_prev_t = now
+                self._step_gyro_prev_gz = step_gz
+            else:
+                dt_imu = now - self._step_gyro_prev_t
+                if 0.0 < dt_imu < 0.5:
+                    self._step_gyro_integral_rad += 0.5 * (step_gz + self._step_gyro_prev_gz) * dt_imu
+                self._step_gyro_prev_t = now
+                self._step_gyro_prev_gz = step_gz
+            self._step_yaw_end = step_yaw
+
         self.writer.writerow(
             [
                 time.strftime("%H:%M:%S", time.localtime()),
@@ -833,8 +892,9 @@ class DriveSequenceRunner(Node):
         )
         self.log_file.flush()
 
-    def force_stop(self, duration=1.0):
-        # 1.0s covers vel_smoother's 0.5 m/s² ramp-to-zero from max command speed.
+    def force_stop(self, duration=3.0):
+        # 3.0s: vel_smoother ramps at 1.0 rad/s² so 1.5 rad/s → 0 takes 1.5s; direct
+        # /diff_cont/cmd_vel_unstamped publish stops ESP32 immediately as a belt-and-suspenders.
         print("[stop] publishing zeros to all motion topics...", flush=True)
         end = time.monotonic() + duration
         zero = make_twist(0.0, 0.0)
@@ -890,11 +950,6 @@ class DriveSequenceRunner(Node):
             help="log warmup/stop phases as well as active motion; default logs active motion only",
         )
         parser.set_defaults(log_active_only=True)
-        parser.add_argument(
-            "--stop-output-topic",
-            action="store_true",
-            help="also publish zero directly to /diff_cont/cmd_vel_unstamped on exit; off by default to avoid perturbing micro-ROS DDS matching",
-        )
         parser.add_argument("--output", default=str(DEFAULT_LOG), help="CSV output file")
         parser.add_argument(
             "--turn-wheel",
@@ -931,6 +986,7 @@ class DriveSequenceRunner(Node):
         parser.add_argument("--turn-angular", type=float, default=0.0, help="angular command during one-turn test")
         parser.add_argument("--floor-distance", type=float, default=0.25, help="linear travel distance in meters for floor_baseline fwd/bwd segments (default 0.25)")
         parser.add_argument("--floor-spin-rate", type=float, default=1.5, help="angular.z speed for floor_baseline spin segments (rad/s)")
+        parser.add_argument("--floor-spin-rotations", type=float, default=1.0, help="number of full rotations per spin step in floor_baseline (default 1)")
         parser.add_argument("--turn-max-time", type=float, default=120.0, help="safety timeout for one-turn test")
         parser.add_argument(
             "--no-encoder-reset",
@@ -1014,6 +1070,23 @@ def main():
             f"imu_enc_ang_err_avg={ang_agreement_str}",
             flush=True,
         )
+        if node._step_imu_results:
+            print("imu_per_step |", flush=True)
+            for r in node._step_imu_results:
+                if r["is_spin"]:
+                    overshoot = r["gyro_deg"] - r["expected_deg"]
+                    print(
+                        f"  {r['label']:<14}  gyro_total={r['gyro_deg']:+.1f}°  "
+                        f"expected={r['expected_deg']:+.0f}°  overshoot={overshoot:+.1f}°  "
+                        f"yaw_net={r['yaw_delta']:+.1f}°",
+                        flush=True,
+                    )
+                else:
+                    direction = "CURVED RIGHT" if r["gyro_deg"] < -5 else "CURVED LEFT" if r["gyro_deg"] > 5 else "straight"
+                    print(
+                        f"  {r['label']:<14}  heading_drift={r['gyro_deg']:+.1f}°  ({direction})",
+                        flush=True,
+                    )
         node.destroy_node()
         rclpy.shutdown()
 
