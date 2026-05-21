@@ -78,7 +78,7 @@ static constexpr float REVERSAL_COAST_VEL = 0.5f;  // rad/s: coast before revers
 static float cmd_lin = 0.0f, cmd_ang = 0.0f;
 // 3s is intentional: Pi WiFi + DDS jitter can cause brief gaps; tighter values cause false disarms during Nav2 autonomous runs.
 static constexpr uint32_t CMD_TIMEOUT_MS = 3000;
-static constexpr uint32_t CMD_FRESH_FOR_PING_MS = 750;
+static constexpr uint32_t CMD_FRESH_FOR_PING_MS = 3500;  // above CMD_TIMEOUT so ping never fires during active motion
 static constexpr uint32_t ARM_ZERO_HOLD_MS = 1000;
 static uint32_t t_cmd_last  = 0;
 static bool motion_armed = false;
@@ -538,7 +538,7 @@ void loop() {
             uint32_t cmd_age = (t_cmd_last > 0) ? (now - t_cmd_last) : UINT32_MAX;
             if (cmd_age > CMD_FRESH_FOR_PING_MS && now - t_ping >= 2000) {
                 t_ping = now;
-                if (rmw_uros_ping_agent(500, 1) != RMW_RET_OK) {
+                if (rmw_uros_ping_agent(100, 1) != RMW_RET_OK) {
                     reset_motion_state();
                     destroy_entities();
                     state = WAITING;
