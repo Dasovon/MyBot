@@ -5,7 +5,7 @@
 ### What this project is
 ROS 2 Humble differential drive robot. RPi 4 + ESP32-S3 (production stack — Arduino Nano replaced). Based on Articulated Robotics tutorial series.
 
-### Current state (2026-05-17)
+### Current state (2026-05-21)
 - Nav2 autonomous navigation ✅ working (saved map at `~/mybot_ws/maps/my_map`)
 - RealSense D435 ✅ color + depth 640×480@15fps (RSUSB backend, fix #18)
 - **Pi fully restored after reflash** ✅: ROS Humble, mybot_ws, microros_ws, librealsense RSUSB, udev rules, SLAM map — all restored. Pi IP: 192.168.86.33
@@ -28,7 +28,10 @@ ROS 2 Humble differential drive robot. RPi 4 + ESP32-S3 (production stack — Ar
   - `robot-launch.service` now defaults to bridge-only on boot; motion is opt-in, and camera/lidar remain opt-in launch args so unplugged hardware does not kill the stack
   - `micro_ros_agent` now targets the stable USB by-id path:
     `/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:5C:23:1C-if00`
-  - **PID (current: KP=28, KI=9, KD=0, KI_MAX=12, START_PWM_SEED=60, RUN_PWM_FLOOR=55)**
+  - **PID TUNED ✅ (2026-05-21) — KP=55, KI=15, KD=0, KI_MAX=40, START_PWM_SEED=60, RUN_PWM_FLOOR=55**
+    - floor_baseline runs 027-031: spin 100.0–100.7% at 1.5 rad/s; 100.1% at 1.0 rad/s; straight drift <3.2°/0.4m
+    - IMU-primary spin stop (--turn-counts-per-rev 977); encoder + INA219 cross-validation per step
+    - Next tuning phase uses lidar scan-matching as ground truth
     - KD=0: derivative caused ~90% overshoot with EMA lag on ramp inputs
     - Preseed: on 0→nonzero transition, integral preset so first tick delivers START_PWM_SEED PWM
     - RUN_PWM_FLOOR=55: sustains output above deadband during low-speed / start-hold phase
@@ -80,21 +83,38 @@ carry that change forward everywhere it matters.
 - Do not leave recurring failures as notes for manual repetition later.
 
 ### Next steps
-1. **Floor test — collect three floor_baseline passes** (DDS blocker fixed):
-   - Stop OLED: `ssh ryan@mybot "sudo systemctl stop oled-display.service"`
-   - Run: `ros2 run articubot_one pid_sequence_test.py --profile floor_baseline --turn-linear 0.35 --floor-spin-rate 1.5 --stop-hold 2.0 --warmup 0.5 --output ~/dev_ws/floor_baseline_1.csv`
-   - Verify all four steps reached their count target (not timed out)
-   - Repeat three times; compare results before making any PID changes
-   - See `docs/floor-test-tuning-log.md` for current firmware constants (KP=28, KI=9, KI_MAX=12, START_PWM_SEED=60)
+1. **Lidar-assisted PID tuning** — bring up SLAM while running floor_baseline; lidar scan-matching provides ground-truth position/heading to validate arc tracking and straight-line distance accuracy that IMU alone can't measure:
+   ```bash
+   # Terminal 1 — Pi (already auto-starts)
+   # robot-launch.service running with enable_motion:=true
+
+   # Terminal 2 — Dev: EKF
+   ros2 launch articubot_one dev_launch.py
+
+   # Terminal 3 — Dev: SLAM
+   ros2 launch slam_toolbox online_async_launch.py use_sim_time:=false
+
+   # Terminal 4 — Dev: RViz (watch robot pose on map while floor_baseline runs)
+   rviz2
+
+   # Terminal 5 — Dev: floor_baseline
+   ros2 run articubot_one pid_sequence_test.py \
+     --profile floor_baseline \
+     --floor-distance 0.4 \
+     --turn-linear 0.35 \
+     --floor-spin-rate 1.5 \
+     --floor-spin-rotations 4 \
+     --stop-hold 2.0 \
+     --warmup 1.0 \
+     --turn-counts-per-rev 977 \
+     --output ~/dev_ws/src/articubot_one/docs/test-results/floor_baseline/YYYY-MM-DD_run_NNN.csv
+   ```
+   Compare SLAM-measured pose before and after each step against commanded pose.
 2. **OLED display — feature additions** (layout is finalized, UI is done):
    - Blinking low battery warning (< 10.5V)
    - ROS heartbeat timeout indicator (ROS OK → ROS OFF if /odom stalls)
    - WiFi disconnected state (IP row shows "NO WIFI" when socket fails)
-   - Charging indicator (current > 0 = charging)
    - CPU temperature warning (Pi throttle threshold ~80°C)
-   - Boot animation (splash on cold start before telemetry arrives)
-   - Autonomous/manual mode indicator (future — tied to Nav2 active state)
-   - Motor fault / encoder health indicator (future — tied to ESP32 telemetry)
 3. **Object Tracking with OpenCV** — final tutorial chapter (pending)
 4. **Jetson Nano setup** (Docker + ROS 2 Humble + CUDA)
 
