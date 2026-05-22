@@ -18,7 +18,7 @@ ekf_filter_node:
     # Provides: x, y, yaw, vx, vyaw
     odom0: /diff_cont/odom
     odom0_config: [true,  true,  false,   # x, y, z
-                   false, false, false,   # roll, pitch, yaw (disabled: encoder accumulated heading drifts badly during spinning due to wheel slip)
+                   false, false, true,    # roll, pitch, yaw
                    true,  false, false,   # vx, vy, vz
                    false, false, true,    # vroll, vpitch, vyaw
                    false, false, false]   # ax, ay, az
