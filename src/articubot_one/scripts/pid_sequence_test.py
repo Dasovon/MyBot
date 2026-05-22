@@ -278,6 +278,11 @@ class DriveSequenceRunner(Node):
         self.latest_enc_counts = None
         self.latest_enc_counts_at = None
         self.latest_cmd = make_twist(0.0, 0.0)
+        self._step_imu_target_deg: float = 0.0   # >0 → IMU integral is primary stop for this step
+        self._step_enc_cnt_l: int = 0             # encoder counts at end of active phase
+        self._step_enc_cnt_r: int = 0
+        self._step_bat_samples: list = []         # per-step voltage samples (active phase only)
+        self._step_cur_samples: list = []         # per-step current samples (active phase only)
         self._state_lock = threading.Lock()
         self._enc_stop = threading.Event()
         self._enc_sock = None
@@ -623,6 +628,21 @@ class DriveSequenceRunner(Node):
                 return True
             return False
         if self.current_step.goal_counts > 0 and self.phase == "active":
+            # PRIMARY: IMU gyro integral — actual body rotation, slip-immune.
+            # Activates once the first IMU sample arrives in this active phase.
+            if self._step_imu_target_deg > 0.0 and self._step_yaw_start is not None:
+                gyro_deg = abs(self._step_gyro_integral_rad * 180.0 / math.pi)
+                if gyro_deg >= self._step_imu_target_deg:
+                    return True
+                if (time.monotonic() - self._turn_started_at) >= self.current_step.duration:
+                    self.get_logger().warn(
+                        f"count-based step '{self.current_step.label}' IMU timeout "
+                        f"({gyro_deg:.1f}°/{self._step_imu_target_deg:.1f}° target)"
+                    )
+                    return True
+                return False
+
+            # FALLBACK: encoder counts — used before first IMU sample or for non-spin steps.
             with self._state_lock:
                 enc = self.latest_enc_counts or {}
                 enc_at = self.latest_enc_counts_at or 0.0
@@ -667,6 +687,11 @@ class DriveSequenceRunner(Node):
         self._step_gyro_integral_rad = 0.0
         self._step_gyro_prev_t = None
         self._step_gyro_prev_gz = None
+        self._step_imu_target_deg = 0.0
+        self._step_enc_cnt_l = 0
+        self._step_enc_cnt_r = 0
+        self._step_bat_samples = []
+        self._step_cur_samples = []
 
     def _report_step_imu(self):
         step = self.current_step
@@ -676,19 +701,47 @@ class DriveSequenceRunner(Node):
         gyro_deg = self._step_gyro_integral_rad * 180.0 / math.pi
         yaw_delta = (self._step_yaw_end - self._step_yaw_start) if self._step_yaw_end is not None else float("nan")
         is_spin = abs(step.angular) > 0.01 and abs(step.linear) < 0.01
+
+        bat_min_v = min(self._step_bat_samples) if self._step_bat_samples else None
+        cur_max_a = max(self._step_cur_samples) if self._step_cur_samples else None
+        bat_str = f"  bat={bat_min_v:.2f}V cur={cur_max_a:.3f}A" if bat_min_v is not None else ""
+
+        enc_rot_deg = None
+        slip_deg = None
+        effective_cpr = None
         if is_spin:
             rotations = self.args.floor_spin_rotations if self.args.profile == "floor_baseline" else 1.0
             expected_deg = rotations * (360.0 if step.angular > 0 else -360.0)
             overshoot = gyro_deg - expected_deg
             pct = 100.0 * gyro_deg / expected_deg if expected_deg else 0.0
+
+            # Sensor fusion cross-check: encoder-derived body rotation vs IMU.
+            # enc body rotation = avg_counts / (WHEEL_SEP/2/WHEEL_RADIUS × counts_per_rev) × 360°
+            # Positive slip = wheels turned more than body moved (floor slip).
+            cnt_avg = (self._step_enc_cnt_l + self._step_enc_cnt_r) / 2.0
+            wheel_revs_per_body_rev = (WHEEL_SEP / 2.0) / WHEEL_RADIUS
+            if wheel_revs_per_body_rev > 0 and self.args.turn_counts_per_rev > 0:
+                enc_rot_deg = cnt_avg / (wheel_revs_per_body_rev * self.args.turn_counts_per_rev) * 360.0
+                slip_deg = enc_rot_deg - abs(gyro_deg)
+                # effective_cpr: how many counts per body revolution this step actually needed
+                if abs(gyro_deg) > 0:
+                    effective_cpr = cnt_avg / (abs(gyro_deg) / 360.0) / wheel_revs_per_body_rev
+
+            enc_str = (
+                f"  enc={self._step_enc_cnt_l}/{self._step_enc_cnt_r}(goal={self._turn_goal_counts})"
+                f"  enc_rot={enc_rot_deg:+.1f}°  slip={slip_deg:+.1f}°  eff_cpr={effective_cpr:.0f}"
+                if enc_rot_deg is not None
+                else f"  enc={self._step_enc_cnt_l}/{self._step_enc_cnt_r}"
+            )
             print(
-                f"[imu] {label:<16}  gyro_total={gyro_deg:+.1f}°  expected={expected_deg:+.0f}°  delta={overshoot:+.1f}°  ({pct:.1f}%)",
+                f"[imu] {label:<16}  gyro_total={gyro_deg:+.1f}°  expected={expected_deg:+.0f}°  "
+                f"delta={overshoot:+.1f}°  ({pct:.1f}%){enc_str}{bat_str}",
                 flush=True,
             )
         else:
             direction = "CURVED RIGHT" if gyro_deg < -5 else "CURVED LEFT" if gyro_deg > 5 else "straight"
             print(
-                f"[imu] {label:<14}  heading_drift={gyro_deg:+.1f}°  ({direction})",
+                f"[imu] {label:<14}  heading_drift={gyro_deg:+.1f}°  ({direction}){bat_str}",
                 flush=True,
             )
         self._step_imu_results.append({
@@ -697,6 +750,13 @@ class DriveSequenceRunner(Node):
             "yaw_delta": yaw_delta,
             "is_spin": is_spin,
             "expected_deg": (rotations * (360.0 if step.angular > 0 else -360.0)) if is_spin else 0.0,
+            "enc_cnt_l": self._step_enc_cnt_l,
+            "enc_cnt_r": self._step_enc_cnt_r,
+            "enc_rot_deg": enc_rot_deg,
+            "slip_deg": slip_deg,
+            "effective_cpr": effective_cpr,
+            "bat_min_v": bat_min_v,
+            "cur_max_a": cur_max_a,
         })
 
     def _advance(self):
@@ -736,6 +796,9 @@ class DriveSequenceRunner(Node):
             self.phase_started = time.monotonic()
             self._turn_started_at = self.phase_started if self.current_step.goal_counts > 0 else None
             self._reset_step_imu()
+            step = self.current_step
+            if step.goal_counts > 0 and abs(step.angular) > 0.01 and abs(step.linear) < 0.01:
+                self._step_imu_target_deg = self.args.floor_spin_rotations * 360.0
             return
 
         if self.phase == "active":
@@ -822,6 +885,9 @@ class DriveSequenceRunner(Node):
             current_a = self.latest_battery.current
             power_w = battery_v * current_a
             self.summary["max_power_w"] = max(self.summary["max_power_w"], power_w)
+            if self.phase == "active":
+                self._step_bat_samples.append(battery_v)
+                self._step_cur_samples.append(current_a)
 
         raw_vx, raw_wz = twist_values(self.latest_raw)
         ekf_vx, ekf_wz = twist_values(self.latest_ekf)
@@ -835,6 +901,10 @@ class DriveSequenceRunner(Node):
             imu_accel_x_filt = self._imu_accel_filt
         with self._state_lock:
             enc = self.latest_enc or {}
+
+        if self.phase == "active" and enc.get("cnt_l") is not None:
+            self._step_enc_cnt_l = abs(int(enc["cnt_l"]))
+            self._step_enc_cnt_r = abs(int(enc["cnt_r"]))
 
         filt_l = float(enc.get("filt_l", 0.0)) if enc else 0.0
         filt_r = float(enc.get("filt_r", 0.0)) if enc else 0.0
@@ -1082,18 +1152,27 @@ def main():
         if node._step_imu_results:
             print("imu_per_step |", flush=True)
             for r in node._step_imu_results:
+                bat_str = f"  bat={r['bat_min_v']:.2f}V cur={r['cur_max_a']:.3f}A" if r.get("bat_min_v") is not None else ""
                 if r["is_spin"]:
                     overshoot = r["gyro_deg"] - r["expected_deg"]
+                    enc_str = f"  enc={r['enc_cnt_l']}/{r['enc_cnt_r']}" if r.get("enc_cnt_l") else ""
+                    fuse_str = ""
+                    if r.get("enc_rot_deg") is not None:
+                        fuse_str = (
+                            f"  enc_rot={r['enc_rot_deg']:+.1f}°"
+                            f"  slip={r['slip_deg']:+.1f}°"
+                            f"  eff_cpr={r['effective_cpr']:.0f}"
+                        )
                     print(
                         f"  {r['label']:<14}  gyro_total={r['gyro_deg']:+.1f}°  "
                         f"expected={r['expected_deg']:+.0f}°  overshoot={overshoot:+.1f}°  "
-                        f"yaw_net={r['yaw_delta']:+.1f}°",
+                        f"yaw_net={r['yaw_delta']:+.1f}°{enc_str}{fuse_str}{bat_str}",
                         flush=True,
                     )
                 else:
                     direction = "CURVED RIGHT" if r["gyro_deg"] < -5 else "CURVED LEFT" if r["gyro_deg"] > 5 else "straight"
                     print(
-                        f"  {r['label']:<14}  heading_drift={r['gyro_deg']:+.1f}°  ({direction})",
+                        f"  {r['label']:<14}  heading_drift={r['gyro_deg']:+.1f}°  ({direction}){bat_str}",
                         flush=True,
                     )
         node.destroy_node()
