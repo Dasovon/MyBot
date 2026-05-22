@@ -1,0 +1,15 @@
+[Unit]
+Description=Robot Launch (micro_ros_agent + sensors)
+After=network.target
+
+[Service]
+Type=simple
+User=ryan
+Environment="PYTHONUNBUFFERED=1"
+ExecStartPre=/bin/bash -c "sudo fuser -k /dev/ttyACM0 2>/dev/null; rm -f /dev/shm/fastrtps_*; sleep 1"
+ExecStart=/bin/bash -c "source /opt/ros/humble/setup.bash && source /home/ryan/mybot_ws/install/setup.bash && source /home/ryan/microros_ws/install/setup.bash && ros2 launch articubot_one launch_robot.launch.py enable_motion:=true enable_lidar:=true"
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

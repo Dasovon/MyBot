@@ -1,0 +1,14 @@
+[Unit]
+Description=OLED Display Node
+After=network.target
+
+[Service]
+Type=simple
+User=ryan
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /home/ryan/mybot_ws/src/articubot_one/src/articubot_one/scripts/oled_display_node.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
