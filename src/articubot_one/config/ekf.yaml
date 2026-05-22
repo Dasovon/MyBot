@@ -35,7 +35,7 @@ ekf_filter_node:
                   false, false, false,   # roll, pitch, yaw (disable absolute heading)
                   false, false, false,   # vx, vy, vz
                   false, false, true,    # vroll, vpitch, vyaw (use gyro angular velocity)
-                  true,  false, false]   # ax, ay, az (use linear acceleration)
+                  false, false, false]   # ax, ay, az (disabled: accelerometer noise double-integrates to position drift when stationary)
     imu0_differential: false
     imu0_relative: true
     imu0_queue_size: 10
