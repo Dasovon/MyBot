@@ -261,9 +261,9 @@ static bool create_entities() {
 
     odom_msg.pose.covariance[0]  = 0.001;  // x variance
     odom_msg.pose.covariance[7]  = 0.001;  // y variance
-    odom_msg.pose.covariance[35] = 0.001;  // yaw variance
+    odom_msg.pose.covariance[35] = 0.1;    // yaw variance — high: accumulated encoder heading drifts during spinning; EKF should prefer IMU gyro rate over this absolute anchor
     odom_msg.twist.covariance[0]  = 0.001; // vx variance
-    odom_msg.twist.covariance[35] = 0.001; // omega variance
+    odom_msg.twist.covariance[35] = 0.001; // omega variance — instantaneous rate is reliable
 
     imu_msg.orientation_covariance[0]         = -1.0;  // EKF ignores orientation
     imu_msg.angular_velocity_covariance[0]    = 0.001;
