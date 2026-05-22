@@ -29,6 +29,16 @@ def generate_launch_description():
         remappings=[('/odometry/filtered', '/odom')],
     )
 
+    # Publishes zero wheel joint positions so robot_state_publisher can compute
+    # left_wheel/right_wheel TFs for RViz. ESP32 publishes odom directly without
+    # joint states — this node fills that gap (cosmetic only, nav doesn't need it).
+    joint_state_publisher = Node(
+        package='joint_state_publisher',
+        executable='joint_state_publisher',
+        name='joint_state_publisher',
+    )
+
     return LaunchDescription([
         ekf,
+        joint_state_publisher,
     ])
