@@ -40,7 +40,7 @@
 // ── Robot constants ───────────────────────────────────────────────────
 static constexpr float WHEEL_RADIUS  = 0.034f;
 static constexpr float WHEEL_SEP     = 0.179f;
-static constexpr int   ENC_CPR       = 1010;
+static constexpr int   ENC_CPR       = 990;   // 11 PPR × 2 (half-quadrature) × 45:1 gear
 static constexpr float COUNTS_TO_RAD = (2.0f * M_PI) / ENC_CPR;
 
 // ── PID — gains in rad/s error units ─────────────────────────────────
@@ -71,7 +71,7 @@ static float vel_l_filt = 0.0f, vel_r_filt = 0.0f;
 // For spins: makes actual chassis rotation track commanded angular rate.
 // K_ANG_OUTER converts angular velocity error (rad/s) to per-wheel target offset (rad/s).
 // Physical coupling factor = WHEEL_SEP/(2*WHEEL_RADIUS) ≈ 2.63; start at 0.5 and tune up.
-static constexpr float K_ANG_OUTER = 0.5f;
+static constexpr float K_ANG_OUTER = 0.0f;
 static float gyro_z_filt = 0.0f;  // latest BNO055 gyro Z (rad/s), updated at 30Hz
 
 static constexpr float REVERSAL_COAST_VEL = 0.5f;  // rad/s: coast before reversing a rolling wheel
