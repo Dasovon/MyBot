@@ -38,7 +38,7 @@ install(
 )
 
 install(
-  PROGRAMS scripts/oled_display_node.py scripts/org01_font.py scripts/vel_smoother.py scripts/pid_sequence_test.py
+  PROGRAMS scripts/oled_display_node.py scripts/org01_font.py scripts/vel_smoother.py scripts/pid_sequence_test.py scripts/scan_gate.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
