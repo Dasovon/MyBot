@@ -138,7 +138,7 @@ ISR direction (validated):
 - Left:  `A == B on CHANGE` → forward (+)
 - Right: `A != B on CHANGE` → forward (+)
 
-Constants: `ENC_CPR = 1010`, `wheel_radius = 0.034 m`
+Constants: `ENC_CPR = 990` (11 PPR × 2 half-quadrature × 45:1 gear), `wheel_radius = 0.034 m`
 
 ### ESP32-S3 → BNO055 + INA219 (confirmed working)
 
@@ -186,3 +186,84 @@ Topic subscribed by ESP32: `/diff_cont/cmd_vel_unstamped`
 | 19, 20 | Native USB D−/D+ — leave for USB |
 | 45, 46 | Strapping pins — avoid signals driven at boot |
 | 0 | Strapping pin (boot mode) |
+
+---
+
+## RPLIDAR A1M8 — Hardware Interface
+
+Model: Slamtec RPLIDAR A1M8 (Waveshare kit). Datasheet: LD108 v3.0. User manual: LM108 v2.3.
+
+The lidar has **two independent power domains** and three connector groups:
+
+### Motor Interface (3-pin JST, separate 5–9V power)
+
+| Pin | Name | Voltage | Function |
+|-----|------|---------|----------|
+| 1 | GND_MOTO | 0V | Motor power ground |
+| 2 | 5V_MOTO | 5–9V | Motor power supply |
+| 3 | CTRL_MOTO | 0V–5V_MOTO (PWM) | Motor enable/speed control |
+
+The motor starts spinning automatically when 5V_MOTO is applied — no firmware command needed.
+`CTRL_MOTO` is a PWM input that enables/controls motor speed (high = run at that duty, 0V = stop).
+
+### Core Interface (5-pin via CP2102 USB adapter)
+
+| Pin | Name | Voltage | Function |
+|-----|------|---------|----------|
+| 1 | VCC_5 | 4.9–5.5V | Digital power (from CP2102) |
+| 2 | TX | 3.3V TTL | Lidar → host data |
+| 3 | RX | 3.3V TTL | Host → lidar commands |
+| 4 | V_MOTO | 5V | Motor power (also from CP2102, tied to DTR) |
+| 5 | GND | 0V | Common ground |
+
+### USB Adapter (CP2102)
+
+- Chip: Silicon Labs CP2102 (UART-to-USB bridge)
+- Also supplies power: 5V → VCC_5 (digital) and V_MOTO/5V_MOTO (motor)
+- **DTR signal controls CTRL_MOTO via hardware** (asserting DTR = motor enable on this kit)
+- udev symlink: `/dev/rplidar` (rule in `/etc/udev/rules.d/99-mybot.rules`, matched by CP2102 VID:PID)
+- Baud rate: 115200, 8N1, 3.3V TTL (CP2102 converts to USB)
+
+### Key Specs
+
+| Parameter | Value |
+|-----------|-------|
+| Scan rate | 1–10 Hz (typical 5.5 Hz) |
+| Sample frequency | >8000 Hz |
+| Distance range | 0.15–12 m |
+| Angular resolution | <1° (360°) |
+| Laser | 785 nm infrared, <5 mW, Class I |
+| Supply (digital) | 4.9–5.5V @ <500 mA |
+| Supply (motor) | 5–9V (kit uses 5V from CP2102) |
+
+### Motor Stop Procedure
+
+**The motor does NOT stop when the serial port is closed or the node is killed.**
+The only software path is the `/stop_motor` service provided by `rplidar_node`:
+
+```bash
+# Run from dev machine or Pi:
+ssh ryan@mybot 'bash -s' < scripts/lidar_stop_motor.sh
+
+# Or directly on Pi:
+~/mybot_ws/src/articubot_one/scripts/lidar_stop_motor.sh
+```
+
+Script logic:
+1. Start `rplidar_node` (exposes `/stop_motor` service)
+2. Wait 12 s for full init (calling earlier returns error `80008002`)
+3. `ros2 service call /stop_motor std_srvs/srv/Empty {}`
+4. Kill node
+
+**Why 12s?** The A1M8 motor needs ~8s to reach operating speed after DTR asserts. `rplidar_node`
+must pass its internal readiness check before it will honor the service call.
+
+### Boot default: lidar OFF
+
+`/etc/systemd/system/robot-launch.service` uses `enable_lidar:=false`.
+Lidar does not auto-start at boot — avoids draining battery during non-SLAM sessions.
+
+To start lidar manually for SLAM:
+```bash
+ros2 launch articubot_one rplidar.launch.py
+```

@@ -1127,3 +1127,66 @@ from dev machine to `/cmd_vel_raw` works (uses UDP network transport, bypasses S
 
 **Files changed:**
 - `src/esp32_microros/src/main.cpp` — `now = millis();` after `rclc_executor_spin_some` in CONNECTED case
+
+### 39) ENC_CPR corrected 1010 → 990; K_ANG_OUTER disabled (2026-05-22)
+
+**Background:** floor_baseline spin tests (runs 042–045) showed `eff_cpr` of ~850 left / ~960 right.
+To isolate encoder error from floor friction, actual CPR was measured (left=989, right=985) and
+theoretical CPR was recomputed: 11 PPR × 2 (A-channel CHANGE ISR, both edges) × 45:1 gear = **990**.
+Old value of 1010 over-estimated wheel distance by 2.1%.
+
+**K_ANG_OUTER = 0.5 → 0.0 (permanently disabled):**
+The IMU outer-loop (gyro_z_filt × K_ANG_OUTER added to each wheel's PID target differential) was
+causing 6–9° overshoot on in-place spins. Disabling it reduced overshoot to <3° with no effect on
+`eff_cpr`, confirming the asymmetry is floor-friction-driven, not a control-loop artifact.
+
+**`eff_cpr` asymmetry root cause:** Left-spin `eff_cpr` (~850) < right-spin (~960) is explained by
+floor friction variation by position and spin direction. Run 044 (different floor tile) showed both
+spins degraded equally to ~810, confirming the effect is positional, not a systematic hardware fault.
+The telnet 5Hz log also misses ~127 encoder counts (~18°) at step boundaries, which accounts for
+part of the apparent discrepancy.
+
+**Files changed:**
+- `src/esp32_microros/src/main.cpp` — `ENC_CPR` 1010→990; `K_ANG_OUTER` 0.5→0.0
+- `docs/test-results/floor_baseline/` — runs 042–045 (042/043 = old CPR; 044 = new position; 045 = INVALID low battery)
+
+### 40) RPLIDAR A1M8 motor stop procedure + lidar disabled at boot (2026-05-22)
+
+**Problem:** The A1M8 motor spins continuously as long as USB is connected, draining ~500 mA even
+when SLAM is not running. Closing the serial port or killing the node does **not** stop the motor —
+the 5V_MOTO rail comes directly from CP2102 USB power (tied to DTR), independent of software state.
+
+**Discovery from datasheet (LD108 v3.0):** The A1M8 has two independent power domains:
+- **5V_MOTO** (motor power, 5–9V, from CP2102 via DTR on this kit) — motor starts on power-up
+- **VCC_5** (digital power, from CP2102) — scan data and UART comms
+- **CTRL_MOTO**: PWM input 0V–5V_MOTO that enables/controls motor speed. On the USB kit, CTRL_MOTO
+  is driven by DTR through CP2102 hardware, not directly accessible from the Pi GPIO.
+
+**What did NOT work:**
+- `stty -hupcl` / Python `s.dtr = False` — DTR is wired to CTRL_MOTO by CP2102 hardware; releasing
+  the serial port from software side had no effect (motor kept spinning)
+- USB bus reset — caused hub-wide disruption (knocked other devices off bus)
+
+**Fix — use `/stop_motor` ROS2 service:**
+`rplidar_node` is the only supported path: it sends an internal SDK command that clears CTRL_MOTO:
+```bash
+ros2 run rplidar_ros rplidar_node --ros-args -p serial_port:=/dev/rplidar -p serial_baudrate:=115200 &
+sleep 12   # must wait for motor spin-up AND node init; calling sooner → error 80008002
+ros2 service call /stop_motor std_srvs/srv/Empty {}
+sleep 1
+kill %1
+```
+
+**Script:** `scripts/lidar_stop_motor.sh` — executable, self-contained, includes source setup.
+Run remotely: `ssh ryan@mybot 'bash -s' < scripts/lidar_stop_motor.sh`
+
+**Boot default changed:** `robot-launch.service` `enable_lidar:=true` → `enable_lidar:=false`.
+Lidar no longer auto-starts at boot. Start manually for SLAM: `ros2 launch articubot_one rplidar.launch.py`
+
+**Hardware reference:** Full RPLIDAR A1M8 pin table and specs added to `docs/pin-mapping.md`.
+Source docs: LD108_SLAMTEC_rplidar_datasheet_A1M8_v3.0_en.pdf, LM108_SLAMTEC_rplidarkit_usermanual_A1M8_v2.3_en.pdf
+
+**Files changed:**
+- `scripts/lidar_stop_motor.sh` — new: motor stop script
+- `/etc/systemd/system/robot-launch.service` (Pi only) — `enable_lidar:=false`
+- `docs/pin-mapping.md` — RPLIDAR A1M8 hardware interface section added; ENC_CPR updated to 990
